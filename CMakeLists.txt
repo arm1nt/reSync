@@ -6,6 +6,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include_directories(.)
 
+add_compile_definitions(LOG DEBUG)
 add_compile_options("$<$<COMPILE_LANGUAGE:C>:-pedantic;-Wall;-g>")
 
 add_executable(reSync
@@ -14,4 +15,4 @@ add_executable(reSync
 
 add_executable(reSyncServer
         server/reSyncd.c
-        )
+        server/util/util.h server/util/mem_util.h)

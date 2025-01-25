@@ -68,6 +68,7 @@ register_watches(const int inotify_fd, const char *workspace_root_path, const ch
     if (dirp == NULL) {
         fatal_error("opendir");
     }
+
     DO_FREE(absolute_directory_path);
 
     while ((dent = readdir(dirp)) != NULL) {

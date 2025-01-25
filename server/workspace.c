@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include <sys/inotify.h>
 
@@ -20,33 +21,33 @@ typedef struct WatchMetadata {
 } WatchMetadata;
 
 WatchMetadata *metadata = NULL;
+char *absolute_workspace_root_path = NULL;
 
 static char *
-get_absolute_dir_path(const char *workspace_root_path, const char *relative_subdir_path)
+concat_paths(const char *path1, const char *path2)
 {
-    char *absolute_path = NULL;
-
-    if (relative_subdir_path == NULL) {
-        absolute_path = strdup(workspace_root_path);
-
-        if (absolute_path == NULL) {
-            fatal_error("strdup");
+    char *concat_path = NULL;
+    if (path1 != NULL && path2 != NULL) {
+        if (asprintf(&concat_path, "%s/%s", path1, path2) < 0) {
+            fatal_error("asprintf");
         }
-
-        return absolute_path;
+        return concat_path;
     }
 
-    if (asprintf(&absolute_path, "%s/%s", workspace_root_path, relative_subdir_path) < 0) {
-        fatal_error("asprintf");
+    const char *non_null_path = (path1 == NULL) ? path2 : path1;
+
+    concat_path = strdup(non_null_path);
+    if (concat_path == NULL) {
+        fatal_error("strdup");
     }
 
-    return absolute_path;
+    return concat_path;
 }
 
 static void
 register_watches(const int inotify_fd, const char *workspace_root_path, const char *relative_subdir_path)
 {
-    char *absolute_directory_path = get_absolute_dir_path(workspace_root_path, relative_subdir_path);
+    char *absolute_directory_path = concat_paths(workspace_root_path, relative_subdir_path);
     LOG("Registering directory '%s'", absolute_directory_path);
 
     int watch_fd = inotify_add_watch(inotify_fd, absolute_directory_path, WATCH_EVENT_MASK | MISC_EVENT_MASK);
@@ -118,6 +119,30 @@ register_watches(const int inotify_fd, const char *workspace_root_path, const ch
     }
 }
 
+static void
+listen_for_inotify_events(const int inotify_fd)
+{
+    char buf[4096] __attribute__ ((aligned(__alignof__(struct inotify_event))));
+    const struct inotify_event *event;
+    ssize_t len;
+
+    while (1) {
+        len = read(inotify_fd, buf, sizeof(buf));
+        if (len == -1 && errno != EAGAIN) {
+            fatal_error("read");
+        }
+
+        if (len <= 0)
+            break;
+
+        for (char *ptr = buf; ptr < buf + len; ptr += sizeof(struct inotify_event) + event->len) {
+            event = (const struct inotify_event *) ptr;
+
+            //handle_inotify_event(inotify_fd, event);
+        }
+    }
+}
+
 int
 main(const int argc, const char **argv)
 {
@@ -126,17 +151,19 @@ main(const int argc, const char **argv)
         fatal_custom_error("Usage: ./workspace ROOT_PATH");
     }
 
-    const char *workspace_root_path = strdup(argv[1]);
+    absolute_workspace_root_path = strdup(argv[1]);
 
     int inotify_fd = inotify_init();
     if (inotify_fd == -1) {
         fatal_error("inotify_init");
     }
 
-    register_watches(inotify_fd, workspace_root_path, NULL);
+    register_watches(inotify_fd, absolute_workspace_root_path, NULL);
 
+    listen_for_inotify_events(inotify_fd);
 
     close(inotify_fd);
+    DO_FREE(absolute_workspace_root_path);
 
     return EXIT_SUCCESS;
 }

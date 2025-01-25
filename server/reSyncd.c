@@ -24,14 +24,14 @@ install_signal_handlers(void)
 }
 
 static void
-set_so_timeout(const int fd)
+set_so_timeout(const int fd, const long sec, const long usec)
 {
-    struct timeval timeout = {.tv_sec = DEFAULT_RCV_TIMEOUT_SEC, .tv_usec = DEFAULT_RCV_TIMEOUT_USEC};
+    struct timeval timeout = {.tv_sec = sec, .tv_usec = usec};
 
     const int ret = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     if (ret < 0) {
         unlink(COMMAND_SOCKET_PATH);
-        fatal_error("setsockopt(SO_RCVTIMEO)");
+        fatal_custom_error("setsockopt(SO_RCVTIMEO)");
     }
 }
 
@@ -81,14 +81,14 @@ server_loop(void)
         }
 
         // Specify a client socket timeout to prevent infinite waits if invalid input is provided
-        set_so_timeout(client_fd);
+        set_so_timeout(client_fd, DEFAULT_RCV_TIMEOUT_SEC, DEFAULT_RCV_TIMEOUT_USEC);
 
         ssize_t bytes_received;
         ssize_t received_cmd_buffer_chunks = 0;
         char *command_buffer = NULL;
         char buffer[COMMAND_BUFFER_CHUNK_SIZE];
 
-        // '..chunk_size -1 ' to ensure that the buffer is always 0 terminated by the memset operation
+        // '..chunk_size - 1 ' to ensure that the buffer is always 0 terminated by the memset operation
         while ((bytes_received = recv(client_fd, buffer, COMMAND_BUFFER_CHUNK_SIZE-1, 0)) > 0) {
             received_cmd_buffer_chunks++;
 
@@ -118,7 +118,7 @@ server_loop(void)
             do_free(&command_buffer);
 
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                L("Connection closed as daemon did not receive a valid command in a timely manner!");
+                LOG("Connection closed as daemon did not receive a valid command in a timely manner!");
                 continue;
             }
 
@@ -126,7 +126,7 @@ server_loop(void)
         }
 
         // TODO: process command - validate the received command and, if valid, perform the requested operation
-        L(command_buffer);
+        LOG(command_buffer);
 
         do_free(&command_buffer);
     }
@@ -139,6 +139,8 @@ int
 main(const int argc, const char **argv)
 {
     install_signal_handlers();
+
+    // parse config file
 
     server_loop();
 

@@ -20,15 +20,17 @@ create_watch_metadata(const int watch_fd, const char *absolute_directory_path, c
 {
     WatchMetadata *value = (WatchMetadata *) do_malloc(sizeof(WatchMetadata));
     value->watch_fd = watch_fd;
-    value->absolute_directory_path = strdup(absolute_directory_path);
-    value->path_relative_to_ws_root = (path_relative_to_ws_root == NULL) ? NULL : strdup(path_relative_to_ws_root);
+    value->absolute_directory_path = resync_strdup(absolute_directory_path);
+    value->path_relative_to_ws_root = resync_strdup(path_relative_to_ws_root);
     value->watch_descriptors_of_direct_subdirs = NULL;
     return value;
 }
 
 static void
-destroy_watch_metadata(WatchMetadata **metadata) {
-    //TODO: free fields as well
+destroy_watch_metadata(WatchMetadata **metadata)
+{
+    DO_FREE((*metadata)->absolute_directory_path);
+    DO_FREE((*metadata)->path_relative_to_ws_root);
     DO_FREE(*metadata);
 }
 
@@ -36,12 +38,13 @@ static int
 register_watches(const int inotify_fd, const char *absolute_workspace_root_path, const char *path_relative_to_ws_root)
 {
     char *absolute_directory_path = concat_paths(absolute_workspace_root_path, path_relative_to_ws_root);
-    LOG("Registering directory: '%s'", absolute_directory_path);
 
     const int watch_fd = inotify_add_watch(inotify_fd, absolute_directory_path, WATCH_EVENT_MASK | MISC_EVENT_MASK);
     if (watch_fd == -1) {
         fatal_error("inotify_add_watch");
     }
+
+    LOG("Registering directory: '%s' with descriptor '%d'", absolute_directory_path, watch_fd);
 
     WatchMetadata *val_descriptor_to_metadata = create_watch_metadata(
             watch_fd,
@@ -59,13 +62,13 @@ register_watches(const int inotify_fd, const char *absolute_workspace_root_path,
 
     // Register all subdirectories of the current directory with the inotify instance.
     const DirectoryPath *path = create_directory_path(absolute_workspace_root_path, path_relative_to_ws_root);
-    const DirectoryPathList *subdir_list = get_paths_of_subdirectories(path);
+    DirectoryPathList *subdir_list = get_paths_of_subdirectories(path);
 
-    const DirectoryPathList *entry;
+    DirectoryPathList *entry;
     LL_FOREACH(subdir_list, entry) {
         register_watches(
                 inotify_fd,
-                absolute_workspace_root_path,
+                entry->path->workspace_root_path,
                 entry->path->subdir_path_relative_to_ws_root
         );
     }
@@ -85,11 +88,21 @@ register_watches(const int inotify_fd, const char *absolute_workspace_root_path,
 
         WatchDescriptorList *current_descriptor = create_watch_descriptor_list_entry(watch_fd);
         LL_APPEND(parent_watch_metadata->watch_descriptors_of_direct_subdirs, current_descriptor);
+
+        DO_FREE(absolute_path_to_parent);
     }
 
 skip_adding_descriptor_to_parent:
 
-    // TODO: free resources
+    DO_FREE(absolute_directory_path);
+    DO_FREE(path);
+
+    DirectoryPathList *elt, *tmp;
+    LL_FOREACH_SAFE(subdir_list, elt, tmp) {
+        LL_DELETE(subdir_list, elt);
+        destroy_directory_path(&(elt->path));
+        DO_FREE(elt);
+    }
 
     return watch_fd;
 }
@@ -104,10 +117,12 @@ remove_watches(const int inotify_fd, const int watch_descriptor)
         fatal_custom_error("no metadata is stored for watch descriptor '%d'.", watch_descriptor);
     }
 
-    int res = inotify_rm_watch(inotify_fd, watch_metadata->watch_fd);
-    if (res == -1) {
-        fatal_error("inotify_rm_watch");
-    }
+    inotify_rm_watch(inotify_fd, watch_metadata->watch_fd);
+    LOG(
+        "Called 'inotify_rm_watch' for dir '%s' with descriptor '%d'.",
+        watch_metadata->absolute_directory_path,
+        watch_metadata->watch_fd
+    );
 
     // Remove the watch descriptor from the parent's list of subdirectory descriptors.
     if (strlen(watch_metadata->absolute_directory_path) > strlen(ws_metadata->absolute_ws_root_path)) {
@@ -130,6 +145,8 @@ remove_watches(const int inotify_fd, const int watch_descriptor)
                 break;
             }
         }
+
+        DO_FREE(abs_parent_path);
     }
 
 skip_removal_from_parent:
@@ -176,7 +193,9 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
     HASH_FIND_INT(watch_descriptor_to_metadata, &event->wd, watch_metadata);
 
     if (watch_metadata == NULL) {
-        fatal_custom_error("No metadata stored for watch descriptor '%d'.", event->wd);
+        // If we don't store metadata for this watch descriptor (anymore), chances are that this is an old event that is
+        //  still enqueued, but we stopped listening for events for this watch.
+        return;
     }
 
     char *absolute_directory_path = concat_paths(ws_metadata->absolute_ws_root_path, watch_metadata->path_relative_to_ws_root);
@@ -184,7 +203,15 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
     char *resource_relative_path = concat_paths(watch_metadata->path_relative_to_ws_root, event->name);
 
     if ((event->mask & IN_DELETE_SELF) || (event->mask & IN_MOVE_SELF)) {
+
+        // These fs events are only relevant for the workspace root. For all other directories contained in the workspace,
+        //  we react to the corresponding event emitted for the parent directory.
+        if (strlen(resource_absolute_path) > strlen(ws_metadata->absolute_ws_root_path)) {
+            goto out;
+        }
+
         // TODO: communicate with daemon process to remove this workspace from config file
+        return;
     }
 
     if ((event->mask & IN_CREATE) || (event->mask & IN_MOVED_TO)) {
@@ -204,11 +231,7 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
             if (event->mask & IN_CREATE) {
                 // File creation causes both an 'IN_CREATE' and an 'IN_CLOSE_WRITE' event to be emitted. To prevent
                 //  unnecessary duplicate syncs with the remote systems, we ignore the 'IN_CREATE' event for files.
-                DO_FREE(absolute_directory_path);
-                DO_FREE(resource_absolute_path);
-                DO_FREE(resource_relative_path);
-
-                return;
+                goto out;
             }
         }
     }
@@ -218,13 +241,13 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
         HASH_FIND_STR(absolute_path_to_metadata, resource_absolute_path, moved_or_deleted_dir_metadata);
 
         if (moved_or_deleted_dir_metadata == NULL) {
-            fatal_custom_error("No metadata stored for '%s'", absolute_directory_path);
+            goto out;
         }
 
         remove_watches(inotify_fd, moved_or_deleted_dir_metadata->watch_fd);
     }
 
-
+out:
     DO_FREE(resource_absolute_path);
     DO_FREE(resource_relative_path);
     DO_FREE(absolute_directory_path);
@@ -237,7 +260,7 @@ listen_for_inotify_events(const int inotify_fd)
     const struct inotify_event *event;
     ssize_t len;
 
-    while (1) {
+    while (1) { // TODO: replace with boolean flag
         len = read(inotify_fd, buf, sizeof(buf));
         if (len == -1 && errno != EAGAIN) {
             fatal_error("read");

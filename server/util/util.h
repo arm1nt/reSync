@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "mem_util.h"
+#include "string_util.h"
 
 #define _GNU_SOURCE
 

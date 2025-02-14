@@ -13,7 +13,18 @@ typedef struct StringList {
 
 static char *
 resync_strdup(const char *str) {
-    return (str == NULL) ? NULL : strdup(str);
+
+    if (str == NULL) {
+        return NULL;
+    }
+
+    char *duped = strdup(str);
+    if (duped == NULL) {
+        perror("strdup");
+        exit(EXIT_FAILURE);
+    }
+
+    return duped;
 }
 
 static bool

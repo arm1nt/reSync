@@ -2,7 +2,9 @@
 
 #include "workspace.h"
 
-WorkspaceMetadata *ws_metadata = NULL;
+// TODO: refactor
+
+WorkspaceInformation *ws_info = NULL;
 
 WatchMetadata *absolute_path_to_metadata = NULL;
 WatchMetadata *watch_descriptor_to_metadata = NULL;
@@ -80,14 +82,28 @@ register_watches(const int inotify_fd, const char *absolute_workspace_root_path,
             goto skip_adding_descriptor_to_parent;
         }
 
-        WatchMetadata *parent_watch_metadata;
-        HASH_FIND_STR(absolute_path_to_metadata, absolute_path_to_parent, parent_watch_metadata);
-        if (parent_watch_metadata == NULL) {
-            fatal_custom_error("No metadata stored for directory '%s'.", absolute_path_to_parent);
+        WatchMetadata *parent_watch_metadata_abs_path;
+        HASH_FIND_STR(absolute_path_to_metadata, absolute_path_to_parent, parent_watch_metadata_abs_path);
+        if (parent_watch_metadata_abs_path == NULL) {
+            fatal_custom_error("No absolute path -> metadata entry stored for directory '%s'.", absolute_path_to_parent);
         }
 
-        WatchDescriptorList *current_descriptor = create_watch_descriptor_list_entry(watch_fd);
-        LL_APPEND(parent_watch_metadata->watch_descriptors_of_direct_subdirs, current_descriptor);
+        WatchMetadata *parent_watch_metadata_descriptor;
+        HASH_FIND_INT(watch_descriptor_to_metadata, &(parent_watch_metadata_abs_path->watch_fd), parent_watch_metadata_descriptor);
+        if (parent_watch_metadata_descriptor == NULL) {
+            fatal_custom_error("No watch descriptor -> metadata entry stored for directory '%s'.", absolute_path_to_parent);
+        }
+
+        WatchDescriptorList *abs_path_entry = create_watch_descriptor_list_entry(watch_fd);
+        LL_APPEND(
+                parent_watch_metadata_abs_path->watch_descriptors_of_direct_subdirs,
+                abs_path_entry
+        );
+        WatchDescriptorList *descriptor_entry = create_watch_descriptor_list_entry(watch_fd);
+        LL_APPEND(
+                parent_watch_metadata_descriptor->watch_descriptors_of_direct_subdirs,
+                descriptor_entry
+        );
 
         DO_FREE(absolute_path_to_parent);
     }
@@ -125,22 +141,36 @@ remove_watches(const int inotify_fd, const int watch_descriptor)
     );
 
     // Remove the watch descriptor from the parent's list of subdirectory descriptors.
-    if (strlen(watch_metadata->absolute_directory_path) > strlen(ws_metadata->absolute_ws_root_path)) {
+    if (strlen(watch_metadata->absolute_directory_path) > strlen(ws_info->absolute_ws_root_path)) {
         char *abs_parent_path = get_path_to_parent_directory(watch_metadata->absolute_directory_path);
         if (abs_parent_path == NULL) {
             goto skip_removal_from_parent;
         }
 
-        WatchMetadata *parent_watch_metadata;
-        HASH_FIND_STR(absolute_path_to_metadata, abs_parent_path, parent_watch_metadata);
-        if (parent_watch_metadata == NULL) {
-            fatal_custom_error("No metadata stored for parent descriptor '%s'.", abs_parent_path);
+        WatchMetadata *parent_watch_metadata_abs_path;
+        HASH_FIND_STR(absolute_path_to_metadata, abs_parent_path, parent_watch_metadata_abs_path);
+        if (parent_watch_metadata_abs_path == NULL) {
+            fatal_custom_error("No absolute path -> metadata entry stored for parent '%s'.", abs_parent_path);
+        }
+
+        WatchMetadata *parent_watch_metadata_descriptor;
+        HASH_FIND_INT(watch_descriptor_to_metadata, &(parent_watch_metadata_abs_path->watch_fd), parent_watch_metadata_descriptor);
+        if (parent_watch_metadata_descriptor == NULL) {
+            fatal_custom_error("No watch descriptor -> metadata entry stored for parent '%s'.", abs_parent_path);
         }
 
         WatchDescriptorList *entry, *tmp;
-        LL_FOREACH_SAFE(parent_watch_metadata->watch_descriptors_of_direct_subdirs, entry, tmp) {
+        LL_FOREACH_SAFE(parent_watch_metadata_abs_path->watch_descriptors_of_direct_subdirs, entry, tmp) {
             if (entry->descriptor == watch_metadata->watch_fd) {
-                LL_DELETE(parent_watch_metadata->watch_descriptors_of_direct_subdirs, entry);
+                LL_DELETE(parent_watch_metadata_abs_path->watch_descriptors_of_direct_subdirs, entry);
+                DO_FREE(entry);
+                break;
+            }
+        }
+
+        LL_FOREACH_SAFE(parent_watch_metadata_descriptor->watch_descriptors_of_direct_subdirs, entry, tmp) {
+            if (entry->descriptor == watch_metadata->watch_fd) {
+                LL_DELETE(parent_watch_metadata_descriptor->watch_descriptors_of_direct_subdirs, entry);
                 DO_FREE(entry);
                 break;
             }
@@ -150,7 +180,6 @@ remove_watches(const int inotify_fd, const int watch_descriptor)
     }
 
 skip_removal_from_parent:
-
     // Remove watches of all subdirectories
     WatchDescriptorList *entry;
     LL_FOREACH(watch_metadata->watch_descriptors_of_direct_subdirs, entry) {
@@ -170,16 +199,77 @@ skip_removal_from_parent:
     destroy_watch_metadata(&watch_metadata);
 }
 
-static void
-create_rsync_command(void)
+static char *
+create_local_dir_arg(char *relative_dir_path)
 {
-    // TODO
+    char *arg;
+    char *local_dir_path = concat_paths(ws_info->absolute_ws_root_path, relative_dir_path);
+
+    // The local directory argument needs a trailing '/', as otherwise the whole directory is copied/synced and not only
+    //  the directory content.
+    if (asprintf(&arg, "%s/", local_dir_path) < 0) {
+        fatal_error("asprintf");
+    }
+
+    DO_FREE(local_dir_path);
+    return arg;
+}
+
+static char *
+create_remote_dir_arg(RemoteSystem *remote_system, char *relative_dir_path)
+{
+    char *arg;
+    char *remote_dir_path = concat_paths(remote_system->remote_workspace_root, relative_dir_path);
+
+    if (asprintf(&arg, "%s:%s", remote_system->remote_host, remote_dir_path) < 0) {
+        fatal_error("asprintf");
+    }
+
+    DO_FREE(remote_dir_path);
+    return arg;
+}
+
+static char **
+create_rsync_command(RemoteSystem *remote_system, char *relative_dir_path)
+{
+    char **rsync_args = (char **) do_malloc(6 * sizeof(char *));
+
+    rsync_args[0] = resync_strdup("rsync");
+    rsync_args[1] = resync_strdup("-az");
+    rsync_args[2] = resync_strdup("--delete");
+    rsync_args[3] = create_local_dir_arg(relative_dir_path);
+    rsync_args[4] = create_remote_dir_arg(remote_system, relative_dir_path);
+    rsync_args[5] = NULL;
+
+    return rsync_args;
 }
 
 static void
-execute_rsync_command(void)
+sync_remote_system(RemoteSystem *remote_system, char *relative_dir_path)
 {
-    // TODO
+    pid_t pid = fork();
+    if (pid < 0) {
+        fatal_error("fork");
+    } else if (pid == 0) {
+        char **args = create_rsync_command(remote_system, relative_dir_path);
+        execvp("rsync", args);
+        fatal_error("execvp");
+    }
+
+    int status;
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status)) {
+        LOG("sync failed");
+    }
+}
+
+static void
+sync_remote_systems(char *relative_dir_path)
+{
+    RemoteSystem *remote_system;
+    LL_FOREACH(ws_info->remote_systems, remote_system) {
+        sync_remote_system(remote_system, relative_dir_path);
+    }
 }
 
 static void
@@ -198,7 +288,7 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
         return;
     }
 
-    char *absolute_directory_path = concat_paths(ws_metadata->absolute_ws_root_path, watch_metadata->path_relative_to_ws_root);
+    char *absolute_directory_path = concat_paths(ws_info->absolute_ws_root_path, watch_metadata->path_relative_to_ws_root);
     char *resource_absolute_path = concat_paths(absolute_directory_path, event->name);
     char *resource_relative_path = concat_paths(watch_metadata->path_relative_to_ws_root, event->name);
 
@@ -206,7 +296,7 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
 
         // These fs events are only relevant for the workspace root. For all other directories contained in the workspace,
         //  we react to the corresponding event emitted for the parent directory.
-        if (strlen(resource_absolute_path) > strlen(ws_metadata->absolute_ws_root_path)) {
+        if (strlen(resource_absolute_path) > strlen(ws_info->absolute_ws_root_path)) {
             goto out;
         }
 
@@ -218,13 +308,14 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
 
         struct stat dirstat;
         if (stat(resource_absolute_path, &dirstat) < 0) {
-            fatal_custom_error("'stat' failed for resource '%s': %s", resource_absolute_path, strerror(errno));
+            // This can happen for e.g. swap files, e.g. when using 'vim'.
+            goto out;
         }
 
         if (S_ISDIR(dirstat.st_mode)) {
             register_watches(
                     inotify_fd,
-                    ws_metadata->absolute_ws_root_path,
+                    ws_info->absolute_ws_root_path,
                     resource_relative_path
             );
         } else {
@@ -246,6 +337,8 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
 
         remove_watches(inotify_fd, moved_or_deleted_dir_metadata->watch_fd);
     }
+
+    sync_remote_systems(watch_metadata->path_relative_to_ws_root);
 
 out:
     DO_FREE(resource_absolute_path);
@@ -286,17 +379,18 @@ main(const int argc, const char **argv)
 
     //ws_metadata = argv_to_workspace_metadata(argv);
     // TODO: Implement argv -> workspace_metadata struct transformation
-    ws_metadata = (WorkspaceMetadata *) do_malloc(sizeof(WorkspaceMetadata));
-    ws_metadata->absolute_ws_root_path = resync_strdup(argv[1]);
+    ws_info = (WorkspaceInformation *) do_malloc(sizeof(WorkspaceInformation*));
+    ws_info->absolute_ws_root_path = resync_strdup(argv[1]);
 
     const int inotify_fd = inotify_init();
     if (inotify_fd == -1) {
         fatal_error("inotify_init");
     }
 
-    // TODO: Sync the directory with all remote systems
+    // Sync the entire workspace with the workspaces of all remote systems.
+    sync_remote_systems(NULL);
 
-    register_watches(inotify_fd, ws_metadata->absolute_ws_root_path, NULL);
+    register_watches(inotify_fd, ws_info->absolute_ws_root_path, NULL);
 
     listen_for_inotify_events(inotify_fd);
 

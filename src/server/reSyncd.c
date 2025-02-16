@@ -6,7 +6,8 @@
 #include <sys/un.h>
 #include <sys/socket.h>
 
-#include "util/util.h"
+#include "src/server/util/error.h"
+#include "src/server/util/debug.h"
 
 #define COMMAND_SOCKET_PATH "/tmp/reSync_cmd.socket"
 #define COMMAND_SOCKET_BACKLOG_SIZE 20

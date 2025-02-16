@@ -1,8 +1,4 @@
-#define _GNU_SOURCE
-
 #include "workspace.h"
-
-// TODO: refactor
 
 WorkspaceInformation *ws_info = NULL;
 
@@ -34,6 +30,24 @@ destroy_watch_metadata(WatchMetadata **metadata)
     DO_FREE((*metadata)->absolute_directory_path);
     DO_FREE((*metadata)->path_relative_to_ws_root);
     DO_FREE(*metadata);
+}
+
+static WatchMetadata *
+get_metadata_optional(WatchMetadata *table, void *key, const ssize_t size)
+{
+    WatchMetadata *entry;
+    HASH_FIND(hh, table, key, size, entry);
+    return entry;
+}
+
+static WatchMetadata *
+get_metadata_required(WatchMetadata *table, void *key, const ssize_t size, char *error_msg)
+{
+    WatchMetadata *entry = get_metadata_optional(table, key, size);
+    if (entry == NULL) {
+        fatal_custom_error(error_msg);
+    }
+    return entry;
 }
 
 static int
@@ -82,28 +96,13 @@ register_watches(const int inotify_fd, const char *absolute_workspace_root_path,
             goto skip_adding_descriptor_to_parent;
         }
 
-        WatchMetadata *parent_watch_metadata_abs_path;
-        HASH_FIND_STR(absolute_path_to_metadata, absolute_path_to_parent, parent_watch_metadata_abs_path);
-        if (parent_watch_metadata_abs_path == NULL) {
-            fatal_custom_error("No absolute path -> metadata entry stored for directory '%s'.", absolute_path_to_parent);
-        }
-
-        WatchMetadata *parent_watch_metadata_descriptor;
-        HASH_FIND_INT(watch_descriptor_to_metadata, &(parent_watch_metadata_abs_path->watch_fd), parent_watch_metadata_descriptor);
-        if (parent_watch_metadata_descriptor == NULL) {
-            fatal_custom_error("No watch descriptor -> metadata entry stored for directory '%s'.", absolute_path_to_parent);
-        }
+        WatchMetadata *parent_watch_metadata_abs_path = GET_METADATA_BY_STR_REQUIRED(absolute_path_to_parent);
+        WatchMetadata *parent_watch_metadata_descriptor = GET_METADATA_BY_INT_REQUIRED(&parent_watch_metadata_abs_path->watch_fd);
 
         WatchDescriptorList *abs_path_entry = create_watch_descriptor_list_entry(watch_fd);
-        LL_APPEND(
-                parent_watch_metadata_abs_path->watch_descriptors_of_direct_subdirs,
-                abs_path_entry
-        );
+        LL_APPEND(parent_watch_metadata_abs_path->watch_descriptors_of_direct_subdirs, abs_path_entry);
         WatchDescriptorList *descriptor_entry = create_watch_descriptor_list_entry(watch_fd);
-        LL_APPEND(
-                parent_watch_metadata_descriptor->watch_descriptors_of_direct_subdirs,
-                descriptor_entry
-        );
+        LL_APPEND(parent_watch_metadata_descriptor->watch_descriptors_of_direct_subdirs, descriptor_entry);
 
         DO_FREE(absolute_path_to_parent);
     }
@@ -134,11 +133,7 @@ remove_watches(const int inotify_fd, const int watch_descriptor)
     }
 
     inotify_rm_watch(inotify_fd, watch_metadata->watch_fd);
-    LOG(
-        "Called 'inotify_rm_watch' for dir '%s' with descriptor '%d'.",
-        watch_metadata->absolute_directory_path,
-        watch_metadata->watch_fd
-    );
+    LOG("Called 'remove_watches' for dir '%s' with descriptor '%d'.", watch_metadata->absolute_directory_path, watch_metadata->watch_fd);
 
     // Remove the watch descriptor from the parent's list of subdirectory descriptors.
     if (strlen(watch_metadata->absolute_directory_path) > strlen(ws_info->absolute_ws_root_path)) {
@@ -180,6 +175,8 @@ remove_watches(const int inotify_fd, const int watch_descriptor)
     }
 
 skip_removal_from_parent:
+    ; // Adding an empty statement, as a goto label cannot be directly followed by a declaration
+
     // Remove watches of all subdirectories
     WatchDescriptorList *entry;
     LL_FOREACH(watch_metadata->watch_descriptors_of_direct_subdirs, entry) {
@@ -199,47 +196,22 @@ skip_removal_from_parent:
     destroy_watch_metadata(&watch_metadata);
 }
 
-static char *
-create_local_dir_arg(char *relative_dir_path)
-{
-    char *arg;
-    char *local_dir_path = concat_paths(ws_info->absolute_ws_root_path, relative_dir_path);
-
-    // The local directory argument needs a trailing '/', as otherwise the whole directory is copied/synced and not only
-    //  the directory content.
-    if (asprintf(&arg, "%s/", local_dir_path) < 0) {
-        fatal_error("asprintf");
-    }
-
-    DO_FREE(local_dir_path);
-    return arg;
-}
-
-static char *
-create_remote_dir_arg(RemoteSystem *remote_system, char *relative_dir_path)
-{
-    char *arg;
-    char *remote_dir_path = concat_paths(remote_system->remote_workspace_root, relative_dir_path);
-
-    if (asprintf(&arg, "%s:%s", remote_system->remote_host, remote_dir_path) < 0) {
-        fatal_error("asprintf");
-    }
-
-    DO_FREE(remote_dir_path);
-    return arg;
-}
-
 static char **
 create_rsync_command(RemoteSystem *remote_system, char *relative_dir_path)
 {
     char **rsync_args = (char **) do_malloc(6 * sizeof(char *));
+    char *local_dir_path = concat_paths(ws_info->absolute_ws_root_path, relative_dir_path);
+    char *remote_dir_path = concat_paths(remote_system->remote_workspace_root, relative_dir_path);
 
     rsync_args[0] = resync_strdup("rsync");
     rsync_args[1] = resync_strdup("-az");
     rsync_args[2] = resync_strdup("--delete");
-    rsync_args[3] = create_local_dir_arg(relative_dir_path);
-    rsync_args[4] = create_remote_dir_arg(remote_system, relative_dir_path);
+    rsync_args[3] = format_string("%s/", local_dir_path);
+    rsync_args[4] = format_string("%s:%s", remote_system->remote_host, remote_dir_path);
     rsync_args[5] = NULL;
+
+    DO_FREE(local_dir_path);
+    DO_FREE(remote_dir_path);
 
     return rsync_args;
 }
@@ -279,9 +251,7 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
         return;
     }
 
-    WatchMetadata *watch_metadata;
-    HASH_FIND_INT(watch_descriptor_to_metadata, &event->wd, watch_metadata);
-
+    WatchMetadata *watch_metadata = GET_METADATA_BY_INT_OPTIONAL(&event->wd);
     if (watch_metadata == NULL) {
         // If we don't store metadata for this watch descriptor (anymore), chances are that this is an old event that is
         //  still enqueued, but we stopped listening for events for this watch.
@@ -328,9 +298,7 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
     }
 
     if (((event->mask & IN_DELETE) || (event->mask & IN_MOVED_FROM)) && (event->mask & IN_ISDIR)) {
-        WatchMetadata *moved_or_deleted_dir_metadata;
-        HASH_FIND_STR(absolute_path_to_metadata, resource_absolute_path, moved_or_deleted_dir_metadata);
-
+        WatchMetadata *moved_or_deleted_dir_metadata = GET_METADATA_BY_STR_OPTIONAL(resource_absolute_path);
         if (moved_or_deleted_dir_metadata == NULL) {
             goto out;
         }
@@ -398,4 +366,3 @@ main(const int argc, const char **argv)
 
     return EXIT_SUCCESS;
 }
-

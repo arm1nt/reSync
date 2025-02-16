@@ -1,10 +1,16 @@
 #ifndef RESYNC_FS_UTIL_H
 #define RESYNC_FS_UTIL_H
 
-#define _GNU_SOURCE
-
 #include <stdio.h>
-#include "util.h"
+#include <dirent.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+#include "../../../lib/ulist.h"
+#include "string.h"
+#include "memory.h"
+#include "error.h"
 
 typedef struct DirectoryPath {
     const char *workspace_root_path;

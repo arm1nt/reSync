@@ -1,23 +1,23 @@
-#ifndef RESYNC_MEM_UTIL_H
-#define RESYNC_MEM_UTIL_H
+#ifndef RESYNC_MEMORY_H
+#define RESYNC_MEMORY_H
 
 #include <stdlib.h>
 
-#define DO_FREE(x) (do_free((void **) &x))
+#define DO_FREE(x) (do_free((void **) (&(x))))
 
-static void *
+void *
 do_malloc(const ssize_t mem_req)
 {
     void *ptr = malloc(mem_req);
 
-    if (!ptr) {
+    if (ptr == NULL) {
         abort();
     }
 
     return ptr;
 }
 
-static inline void
+void
 do_free(void **ptr)
 {
     if (ptr != NULL && *ptr != NULL) {
@@ -26,4 +26,4 @@ do_free(void **ptr)
     }
 }
 
-#endif //RESYNC_MEM_UTIL_H
+#endif //RESYNC_MEMORY_H

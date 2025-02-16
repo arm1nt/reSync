@@ -5,37 +5,25 @@
 
 #define DO_FREE(x) (do_free((void **) (&(x))))
 
-void *
-do_realloc(void *orig_ptr, const ssize_t mem_req)
-{
-    void *ptr = realloc(orig_ptr, mem_req);
+/**
+ *
+ * @param orig_ptr
+ * @param mem_req
+ * @return
+ */
+void *do_realloc(void *orig_ptr, const ssize_t mem_req);
 
-    if (ptr == NULL) {
-        abort();
-    }
+/**
+ *
+ * @param mem_req
+ * @return
+ */
+void *do_malloc(const ssize_t mem_req);
 
-    return ptr;
-}
-
-void *
-do_malloc(const ssize_t mem_req)
-{
-    void *ptr = malloc(mem_req);
-
-    if (ptr == NULL) {
-        abort();
-    }
-
-    return ptr;
-}
-
-void
-do_free(void **ptr)
-{
-    if (ptr != NULL && *ptr != NULL) {
-        free(*ptr);
-        *ptr = NULL;
-    }
-}
+/**
+ *
+ * @param ptr
+ */
+void do_free(void **ptr);
 
 #endif //RESYNC_MEMORY_H

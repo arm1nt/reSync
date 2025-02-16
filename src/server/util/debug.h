@@ -11,18 +11,7 @@
 #ifdef RESYNC_LOGGING
 #define LOG(fmt, ...) log_msg(fmt, ##__VA_ARGS__)
 
-void
-log_msg(const char *fmt, ...)
-{
-    va_list args;
-    va_start(args, fmt);
-
-    char *msg = format_string_from_list(fmt, args);
-    fprintf(stdout, "%s\n", msg);
-
-    va_end(args);
-    DO_FREE(msg);
-}
+void log_msg(const char *fmt, ...);
 #else
 #define LOG(fmt, ...) do {} while(0)
 #endif

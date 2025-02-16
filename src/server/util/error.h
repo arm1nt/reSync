@@ -28,6 +28,7 @@ fatal_custom_error(const char *fmt, ...)
 
     va_end(args);
     DO_FREE(msg);
+    exit(EXIT_FAILURE);
 }
 
 #endif //RESYNC_ERROR_H

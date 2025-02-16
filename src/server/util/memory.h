@@ -6,6 +6,18 @@
 #define DO_FREE(x) (do_free((void **) (&(x))))
 
 void *
+do_realloc(void *orig_ptr, const ssize_t mem_req)
+{
+    void *ptr = realloc(orig_ptr, mem_req);
+
+    if (ptr == NULL) {
+        abort();
+    }
+
+    return ptr;
+}
+
+void *
 do_malloc(const ssize_t mem_req)
 {
     void *ptr = malloc(mem_req);

@@ -1,6 +1,8 @@
 #include "workspace.h"
 
-WorkspaceInformation *ws_info = NULL;
+volatile sig_atomic_t terminate_process = 0;
+
+WorkspaceInformation *workspace_information = NULL;
 
 WatchMetadata *absolute_path_to_metadata = NULL;
 WatchMetadata *watch_descriptor_to_metadata = NULL;
@@ -136,7 +138,7 @@ remove_watches(const int inotify_fd, const int watch_descriptor)
     LOG("Called 'remove_watches' for dir '%s' with descriptor '%d'.", watch_metadata->absolute_directory_path, watch_metadata->watch_fd);
 
     // Remove the watch descriptor from the parent's list of subdirectory descriptors.
-    if (strlen(watch_metadata->absolute_directory_path) > strlen(ws_info->absolute_ws_root_path)) {
+    if (strlen(watch_metadata->absolute_directory_path) > strlen(workspace_information->local_workspace_root_path)) {
         char *abs_parent_path = get_path_to_parent_directory(watch_metadata->absolute_directory_path);
         if (abs_parent_path == NULL) {
             goto skip_removal_from_parent;
@@ -196,54 +198,6 @@ skip_removal_from_parent:
     destroy_watch_metadata(&watch_metadata);
 }
 
-static char **
-create_rsync_command(RemoteSystem *remote_system, char *relative_dir_path)
-{
-    char **rsync_args = (char **) do_malloc(6 * sizeof(char *));
-    char *local_dir_path = concat_paths(ws_info->absolute_ws_root_path, relative_dir_path);
-    char *remote_dir_path = concat_paths(remote_system->remote_workspace_root, relative_dir_path);
-
-    rsync_args[0] = resync_strdup("rsync");
-    rsync_args[1] = resync_strdup("-az");
-    rsync_args[2] = resync_strdup("--delete");
-    rsync_args[3] = format_string("%s/", local_dir_path);
-    rsync_args[4] = format_string("%s:%s", remote_system->remote_host, remote_dir_path);
-    rsync_args[5] = NULL;
-
-    DO_FREE(local_dir_path);
-    DO_FREE(remote_dir_path);
-
-    return rsync_args;
-}
-
-static void
-sync_remote_system(RemoteSystem *remote_system, char *relative_dir_path)
-{
-    pid_t pid = fork();
-    if (pid < 0) {
-        fatal_error("fork");
-    } else if (pid == 0) {
-        char **args = create_rsync_command(remote_system, relative_dir_path);
-        execvp("rsync", args);
-        fatal_error("execvp");
-    }
-
-    int status;
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status)) {
-        LOG("sync failed");
-    }
-}
-
-static void
-sync_remote_systems(char *relative_dir_path)
-{
-    RemoteSystem *remote_system;
-    LL_FOREACH(ws_info->remote_systems, remote_system) {
-        sync_remote_system(remote_system, relative_dir_path);
-    }
-}
-
 static void
 handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
 {
@@ -258,7 +212,7 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
         return;
     }
 
-    char *absolute_directory_path = concat_paths(ws_info->absolute_ws_root_path, watch_metadata->path_relative_to_ws_root);
+    char *absolute_directory_path = concat_paths(workspace_information->local_workspace_root_path, watch_metadata->path_relative_to_ws_root);
     char *resource_absolute_path = concat_paths(absolute_directory_path, event->name);
     char *resource_relative_path = concat_paths(watch_metadata->path_relative_to_ws_root, event->name);
 
@@ -266,7 +220,7 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
 
         // These fs events are only relevant for the workspace root. For all other directories contained in the workspace,
         //  we react to the corresponding event emitted for the parent directory.
-        if (strlen(resource_absolute_path) > strlen(ws_info->absolute_ws_root_path)) {
+        if (strlen(resource_absolute_path) > strlen(workspace_information->local_workspace_root_path)) {
             goto out;
         }
 
@@ -285,7 +239,7 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
         if (S_ISDIR(dirstat.st_mode)) {
             register_watches(
                     inotify_fd,
-                    ws_info->absolute_ws_root_path,
+                    workspace_information->local_workspace_root_path,
                     resource_relative_path
             );
         } else {
@@ -306,7 +260,7 @@ handle_inotify_event(const int inotify_fd, const struct inotify_event *event)
         remove_watches(inotify_fd, moved_or_deleted_dir_metadata->watch_fd);
     }
 
-    sync_remote_systems(watch_metadata->path_relative_to_ws_root);
+    synchronize_workspace(workspace_information, watch_metadata->path_relative_to_ws_root);
 
 out:
     DO_FREE(resource_absolute_path);
@@ -321,7 +275,7 @@ listen_for_inotify_events(const int inotify_fd)
     const struct inotify_event *event;
     ssize_t len;
 
-    while (1) { // TODO: replace with boolean flag
+    while (!terminate_process) {
         len = read(inotify_fd, buf, sizeof(buf));
         if (len == -1 && errno != EAGAIN) {
             fatal_error("read");
@@ -341,24 +295,22 @@ listen_for_inotify_events(const int inotify_fd)
 int
 main(const int argc, const char **argv)
 {
-    /*if (argc < 3) {
-        fatal_custom_error("Usage: ./workspace WS_ROOT_PATH REMOTE_SYSTEM...");
-    }*/
+    if (argc != 2) {
+        fatal_custom_error("Usage: ./workspace JSON_STRINGIFIED_CONFIG_FILE_ENTRY");
+    }
 
-    //ws_metadata = argv_to_workspace_metadata(argv);
-    // TODO: Implement argv -> workspace_metadata struct transformation
-    ws_info = (WorkspaceInformation *) do_malloc(sizeof(WorkspaceInformation*));
-    ws_info->absolute_ws_root_path = resync_strdup(argv[1]);
+    workspace_information = stringified_json_to_workspace_information(argv[1]);
+
+    // To account for possible changes that happened while 'reSync' was not running, we initially sync the entire workspace.
+    synchronize_workspace(workspace_information, NULL);
 
     const int inotify_fd = inotify_init();
     if (inotify_fd == -1) {
         fatal_error("inotify_init");
     }
 
-    // Sync the entire workspace with the workspaces of all remote systems.
-    sync_remote_systems(NULL);
-
-    register_watches(inotify_fd, ws_info->absolute_ws_root_path, NULL);
+    // Register all directories contained in this workspace with the previously created inotify instance
+    register_watches(inotify_fd, workspace_information->local_workspace_root_path, NULL);
 
     listen_for_inotify_events(inotify_fd);
 

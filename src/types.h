@@ -3,8 +3,8 @@
 
 #include "../lib/json/cJSON.h"
 #include "../lib/ulist.h"
-#include "memory.h"
-#include "server/util/error.h"
+#include "util/memory.h"
+#include "util/error.h"
 
 /*
  * Recognized JSON object members
@@ -54,12 +54,14 @@ typedef struct SshConnectionInformation {
 
 typedef struct RemoteWorkspaceMetadata {
     char *remote_workspace_root_path;
-    enum ConnectionType connection_type;
+    ConnectionType connection_type;
+
     union {
         SshConnectionInformation *sshConnectionInformation;
         char *ssh_host_alias;
         RsyncConnectionInformation *rsyncConnectionInformation;
     } connection_information;
+
     struct RemoteWorkspaceMetadata *next;
 } RemoteWorkspaceMetadata;
 

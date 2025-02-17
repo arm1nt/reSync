@@ -1,7 +1,7 @@
 #ifndef RESYNC_SOCKET_H
 #define RESYNC_SOCKET_H
 
-#include "server/util/error.h"
+#include "util/error.h"
 
 #include <unistd.h>
 #include <sys/un.h>

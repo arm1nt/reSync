@@ -14,11 +14,11 @@
 
 #include "../../../lib/ulist.h"
 #include "../../../lib/utash.h"
-#include "../util/memory.h"
-#include "../util/string.h"
-#include "../util/debug.h"
-#include "../util/error.h"
-#include "../util/fs_util.h"
+#include "../../util/memory.h"
+#include "../../util/string.h"
+#include "../../util/debug.h"
+#include "../../util/error.h"
+#include "../../util/fs_util.h"
 
 #define WATCH_EVENT_MASK (IN_CLOSE_WRITE | IN_CREATE | IN_DELETE | IN_DELETE_SELF | IN_MOVE | IN_MOVE_SELF)
 #define MISC_EVENT_MASK (IN_ONLYDIR)

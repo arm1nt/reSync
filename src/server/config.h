@@ -6,8 +6,8 @@
 
 #include "../../lib/json/cJSON.h"
 #include "../../lib/ulist.h"
-#include "util/error.h"
-#include "util/debug.h"
+#include "../util/error.h"
+#include "../util/debug.h"
 #include "../types.h"
 
 #define CONFIG_FILE_PATH "./resync.json"

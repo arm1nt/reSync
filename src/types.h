@@ -68,7 +68,6 @@ typedef struct RemoteWorkspaceMetadata {
 typedef struct WorkspaceInformation {
     char *local_workspace_root_path;
     RemoteWorkspaceMetadata *remote_systems;
-    struct WorkspaceInformation *next;
 } WorkspaceInformation;
 
 

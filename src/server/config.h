@@ -12,10 +12,16 @@
 
 #define CONFIG_FILE_PATH "./resync.json"
 
+typedef struct ConfigFileEntryInformation {
+    WorkspaceInformation *workspace_information;
+    char *ws_information_json_string;
+    struct ConfigFileEntryInformation *next;
+} ConfigFileEntryInformation;
+
 /*
  * Parses the reSync configuration file and returns a structured view of all contained information
  */
-WorkspaceInformation *parse_config_file(void);
+ConfigFileEntryInformation *parse_config_file(void);
 
 bool add_config_file_entry(void);
 

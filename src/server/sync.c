@@ -17,19 +17,17 @@ construct_remote_dir_arg_for_ssh(RemoteWorkspaceMetadata *remote_system, const c
 
     SshConnectionInformation *connection_information = remote_system->connection_information.sshConnectionInformation;
 
+    char *arg;
     if (connection_information->username != NULL) {
-        char *arg = format_string(
+        arg = format_string(
                 "%s@%s:%s",
                 connection_information->username,
                 connection_information->hostname,
                 remote_dir_path
         );
-
-        DO_FREE(remote_dir_path);
-        return arg;
+    } else {
+        arg = format_string("%s:%s", connection_information->hostname, remote_dir_path);
     }
-
-    char *arg = format_string("%s:%s", connection_information->hostname, remote_dir_path);
 
     DO_FREE(remote_dir_path);
     return arg;
@@ -79,7 +77,6 @@ construct_remote_dir_arg_for_rsync_daemon(RemoteWorkspaceMetadata *remote_system
     DO_FREE(remote_dir_path);
     DO_FREE(user_and_host_segment);
     return arg;
-
 }
 
 static char *
@@ -128,9 +125,23 @@ construct_rsync_cmd_arguments(WorkspaceInformation *ws_info, RemoteWorkspaceMeta
 }
 
 static void
-execute_rsync_command(void)
+execute_rsync_command(char **args)
 {
-    //TODO:
+    const pid_t pid = fork();
+
+    if (pid < 0) {
+        fatal_error("fork");
+    } else if (pid == 0) {
+        execvp("rsync", args);
+        fatal_error("execvp");
+    }
+
+    int status;
+    waitpid(pid, &status, 0);
+
+    if (!WIFEXITED(status)){
+        fatal_custom_error("Error: failed to execute rsync");
+    }
 }
 
 void
@@ -138,7 +149,7 @@ synchronize_with_remote_system(WorkspaceInformation *ws_info, RemoteWorkspaceMet
 {
     char **args = construct_rsync_cmd_arguments(ws_info, remote_system, relative_path);
 
-    // TODO: execute command
+    execute_rsync_command(args);
 
     char **ptr = args;
     while (*ptr != NULL) {

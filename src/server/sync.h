@@ -9,6 +9,7 @@
 
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 void synchronize_workspace(WorkspaceInformation *workspace_information, const char *relative_path);
 

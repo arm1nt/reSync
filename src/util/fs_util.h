@@ -7,7 +7,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include "../../../lib/ulist.h"
+#include "../../lib/ulist.h"
 #include "string.h"
 #include "memory.h"
 #include "error.h"

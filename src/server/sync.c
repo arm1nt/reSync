@@ -125,6 +125,18 @@ construct_rsync_cmd_arguments(WorkspaceInformation *ws_info, RemoteWorkspaceMeta
 }
 
 static void
+free_args_array(char **args)
+{
+    char **ptr = args;
+
+    while (*ptr != NULL) {
+        DO_FREE(*ptr);
+        *ptr++;
+    }
+    DO_FREE(args);
+}
+
+static int
 execute_rsync_command(char **args)
 {
     const pid_t pid = fork();
@@ -139,9 +151,7 @@ execute_rsync_command(char **args)
     int status;
     waitpid(pid, &status, 0);
 
-    if (!WIFEXITED(status)){
-        fatal_custom_error("Error: failed to execute rsync");
-    }
+    return WEXITSTATUS(status);
 }
 
 void
@@ -149,12 +159,20 @@ synchronize_with_remote_system(WorkspaceInformation *ws_info, RemoteWorkspaceMet
 {
     char **args = construct_rsync_cmd_arguments(ws_info, remote_system, relative_path);
 
-    execute_rsync_command(args);
+    int exit_status = execute_rsync_command(args);
+    free_args_array(args);
 
-    char **ptr = args;
-    while (*ptr != NULL) {
-        DO_FREE(*ptr);
-        *ptr++;
+    if (exit_status != EXIT_SUCCESS) {
+        // Attempt to sync the workspace starting from the ws root, since its possible that (parts) of the remote folder
+        //  were manually deleted
+        args = construct_rsync_cmd_arguments(ws_info, remote_system, NULL);
+
+        exit_status = execute_rsync_command(args);
+        free_args_array(args);
+
+        if (exit_status != EXIT_SUCCESS) {
+            fatal_custom_error("Error: Failed to sync with remote system");
+        }
     }
 }
 

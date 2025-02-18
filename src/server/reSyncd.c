@@ -1,20 +1,21 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
-#include <sys/un.h>
-#include <sys/socket.h>
 
-#include "src/server/util/error.h"
-#include "src/server/util/debug.h"
+#include "config.h"
+#include "../socket.h"
 
 #define COMMAND_SOCKET_PATH "/tmp/reSync_cmd.socket"
-#define COMMAND_SOCKET_BACKLOG_SIZE 20
 #define COMMAND_BUFFER_CHUNK_SIZE ((ssize_t)(2048 * sizeof(char)))
 
 #define DEFAULT_RCV_TIMEOUT_SEC 2
 #define DEFAULT_RCV_TIMEOUT_USEC 0
+
+#define WORKSPACE_MONITOR_EXECUTABLE "./linux/ws"
 
 volatile sig_atomic_t terminate_daemon = 0;
 
@@ -25,53 +26,15 @@ install_signal_handlers(void)
 }
 
 static void
-set_so_timeout(const int fd, const long sec, const long usec)
+handle_request(char *cmd_buffer)
 {
-    struct timeval timeout = {.tv_sec = sec, .tv_usec = usec};
-
-    const int ret = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    if (ret < 0) {
-        unlink(COMMAND_SOCKET_PATH);
-        fatal_custom_error("setsockopt(SO_RCVTIMEO)");
-    }
-}
-
-static int
-create_server_socket(void)
-{
-    int ret, server_fd;
-    struct sockaddr_un server_addr;
-
-    server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (server_fd == -1) {
-        fatal_error("socket");
-    }
-
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sun_family = AF_UNIX;
-    strncpy(server_addr.sun_path, COMMAND_SOCKET_PATH, sizeof(server_addr.sun_path)-1);
-
-    // In case a previous cleanup failed, remove the (possibly existing) socket file
-    unlink(COMMAND_SOCKET_PATH);
-
-    ret = bind (server_fd, (const struct sockaddr_un *) &server_addr, sizeof(server_addr));
-    if (ret == -1) {
-        fatal_error("bind");
-    }
-
-    ret = listen(server_fd, COMMAND_SOCKET_BACKLOG_SIZE);
-    if (ret == -1) {
-        unlink(COMMAND_SOCKET_PATH);
-        fatal_error("listen");
-    }
-
-    return server_fd;
+    //TODO:
 }
 
 static void
 server_loop(void)
 {
-    const int command_server_socket = create_server_socket();
+    const int command_server_socket = create_unix_server_socket(COMMAND_SOCKET_PATH);
 
     while (!terminate_daemon) {
 
@@ -82,7 +45,7 @@ server_loop(void)
         }
 
         // Specify a client socket timeout to prevent infinite waits if invalid input is provided
-        set_so_timeout(client_fd, DEFAULT_RCV_TIMEOUT_SEC, DEFAULT_RCV_TIMEOUT_USEC);
+        set_socket_timeout(client_fd, DEFAULT_RCV_TIMEOUT_SEC, DEFAULT_RCV_TIMEOUT_USEC);
 
         ssize_t bytes_received;
         ssize_t received_cmd_buffer_chunks = 0;
@@ -116,7 +79,7 @@ server_loop(void)
         close(client_fd);
 
         if (bytes_received < 0) {
-            do_free(&command_buffer);
+            DO_FREE(command_buffer);
 
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 LOG("Connection closed as daemon did not receive a valid command in a timely manner!");
@@ -126,14 +89,66 @@ server_loop(void)
             break;
         }
 
-        // TODO: process command - validate the received command and, if valid, perform the requested operation
-        LOG(command_buffer);
-
-        do_free(&command_buffer);
+        handle_request(command_buffer);
+        DO_FREE(command_buffer);
     }
 
     close(command_server_socket);
     unlink(COMMAND_SOCKET_PATH);
+}
+
+static void
+start_workspace_monitor(ConfigFileEntryInformation *config_entry_info)
+{
+    const pid_t pid = fork();
+
+    if (pid < 0) {
+        fatal_custom_error(
+                "Unable to create fs monitoring process for '%s': %s",
+                config_entry_info->workspace_information->local_workspace_root_path,
+                strerror(errno)
+        );
+    } else if (pid == 0) {
+
+        if (setsid() == -1) {
+            fatal_error("setsid");
+        }
+
+        const pid_t gc_pid = fork();
+        if (gc_pid < 0) {
+            fatal_error("fork");
+        }
+
+        if (gc_pid > 0) {
+            exit(EXIT_SUCCESS);
+        }
+
+        if (gc_pid == 0) {
+            execlp(
+                    WORKSPACE_MONITOR_EXECUTABLE,
+                    WORKSPACE_MONITOR_EXECUTABLE,
+                    config_entry_info->ws_information_json_string,
+                    (char *) NULL
+            );
+
+            fatal_custom_error(
+                    "'execlp' failed for workspace '%s': %s",
+                    config_entry_info->workspace_information->local_workspace_root_path,
+                    strerror(errno)
+            );
+        }
+    }
+
+    // TODO: map pid -> workspace
+}
+
+static void
+start_workspace_monitors(ConfigFileEntryInformation *workspaces)
+{
+    ConfigFileEntryInformation *entry;
+    LL_FOREACH(workspaces, entry) {
+        start_workspace_monitor(entry);
+    }
 }
 
 int
@@ -141,8 +156,13 @@ main(const int argc, const char **argv)
 {
     install_signal_handlers();
 
-    // parse config file
+    // Parse configuration file and start ws monitoring process for each workspace to be synced
+    ConfigFileEntryInformation *config_file_entries = parse_config_file();
+    start_workspace_monitors(config_file_entries);
 
+    daemon(0, 0);
+
+    // Start listen for incoming commands and handle them
     server_loop();
 
     return EXIT_SUCCESS;

@@ -154,7 +154,7 @@ execute_rsync_command(char **args)
     return WEXITSTATUS(status);
 }
 
-void
+static void
 synchronize_with_remote_system(WorkspaceInformation *ws_info, RemoteWorkspaceMetadata *remote_system, const char *relative_path)
 {
     char **args = construct_rsync_cmd_arguments(ws_info, remote_system, relative_path);

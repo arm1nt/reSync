@@ -5,6 +5,12 @@
 #include "../lib/ulist.h"
 #include "util/memory.h"
 #include "util/error.h"
+#include "util/debug.h"
+
+/*
+ * Convenience macros for parsing JSON objects
+ */
+#define STRING_VAL_EXISTS(x) ((x) != NULL && (x)->valuestring != NULL)
 
 /*
  * Recognized JSON object members
@@ -22,6 +28,9 @@
 #define KEY_RSYNC_DAEMON_CONNECTION_INFO_PORT "port"
 #define KEY_SSH_HOST_ALIAS_CONNECTION_INFO_NAME "ssh_host_alias"
 
+#define KEY_DAEMON_CMD_TYPE "type"
+#define KEY_DAEMON_CMD_WORKSPACE_INFO "workspace_info"
+
 #define CONNECTION_TYPE_SSH "SSH"
 #define CONNECTION_TYPE_SSH_LEN 3
 #define CONNECTION_TYPE_SSH_HOST_ALIAS "SSH_HOST_ALIAS"
@@ -33,6 +42,30 @@
 #define IS_SSH_CONNECTION_TYPE(x) CHECK_CONNECTION_TYPE(x, CONNECTION_TYPE_SSH, CONNECTION_TYPE_SSH_LEN)
 #define IS_SSH_HOST_ALIAS_CONNECTION_TYPE(x) CHECK_CONNECTION_TYPE(x, CONNECTION_TYPE_SSH_HOST_ALIAS, CONNECTION_TYPE_SSH_HOST_ALIAS_LEN)
 #define IS_RSYNC_DAEMON_CONNECTION_TYPE(x) CHECK_CONNECTION_TYPE(x, CONNECTION_TYPE_RSYNC_DAEMON, CONNECTION_TYPE_RSYNC_DAEMON_LEN)
+
+#define CMD_TYPE_ADD_WORKSPACE "add-workspace"
+#define CMD_TYPE_ADD_WORKSPACE_LEN (strlen("add-workspace"))
+#define CMD_TYPE_REMOVE_WORKSPACE "remove-workspace"
+#define CMD_TYPE_REMOVE_WORKSPACE_LEN (strlen("remove-workspace"))
+#define CMD_TYPE_ADD_REMOTE_SYSTEM "add-remote-system"
+#define CMD_TYPE_ADD_REMOTE_SYSTEM_LEN (strlen("add-remote-system"))
+#define CMD_TYPE_REMOVE_REMOTE_SYSTEM "remove-remote-system"
+#define CMD_TYPE_REMOVE_REMOTE_SYSTEM_LEN (strlen("remove-remote-system"))
+
+#define CHECK_CMD_TYPE(x,y,z) (strncmp(x,y,z) == 0 && strlen(x) == (z))
+#define IS_ADD_WORKSPACE_CMD(x) CHECK_CMD_TYPE(x, CMD_TYPE_ADD_WORKSPACE, CMD_TYPE_ADD_WORKSPACE_LEN)
+#define IS_REMOVE_WORKSPACE_CMD(x) CHECK_CMD_TYPE(x, CMD_TYPE_REMOVE_WORKSPACE, CMD_TYPE_REMOVE_WORKSPACE_LEN)
+#define IS_ADD_REMOTE_SYSTEM_CMD(x) CHECK_CMD_TYPE(x, CMD_TYPE_ADD_REMOTE_SYSTEM, CMD_TYPE_ADD_REMOTE_SYSTEM_LEN)
+#define IS_REMOVE_REMOTE_SYSTEM_CMD(x) CHECK_CMD_TYPE(x, CMD_TYPE_REMOVE_REMOTE_SYSTEM, CMD_TYPE_REMOVE_REMOTE_SYSTEM_LEN)
+
+/*
+ * Error handling macros
+ */
+#define JSON_MEMBER_MISSING(x,y) format_string("Key '%s' is missing from \n'%s'", x, JSON_PRINT(y))
+#define JSON_PRINT(x) (cJSON_Print(x))
+
+#define MIN_PORT_NUMBER 0
+#define MAX_PORT_NUMBER 65535
 
 typedef enum ConnectionType {
     SSH,
@@ -70,13 +103,38 @@ typedef struct WorkspaceInformation {
     RemoteWorkspaceMetadata *remote_systems;
 } WorkspaceInformation;
 
+typedef enum ResyncCommand {
+    ADD_WORKSPACE,
+    REMOVE_WORKSPACE,
+    ADD_REMOTE_SYSTEM,
+    REMOVE_REMOTE_SYSTEM
+} ResyncCommand;
 
-WorkspaceInformation *stringified_json_to_workspace_information(const char *stringified_json_object);
+typedef struct ResyncDaemonCommand {
+    ResyncCommand command_type;
+    WorkspaceInformation *workspace_information;
+} ResyncDaemonCommand;
 
-WorkspaceInformation *json_to_workspace_information(const cJSON *json_object);
+/*
+ * Applies to all exposed functions:
+ *      On success, the expected result is returned, upon failure, NULL is returned and the error msg argument
+ *      is populated with a descriptive error message.
+ */
 
-cJSON *workspace_information_to_json(WorkspaceInformation *workspace_information);
+WorkspaceInformation *stringified_json_to_workspace_information(const char *stringified_json_object, char **error_msg);
 
-char *workspace_information_to_stringified_json(WorkspaceInformation *workspace_information);
+WorkspaceInformation *json_to_workspace_information(const cJSON *json_object, char **error_msg);
+
+cJSON *workspace_information_to_json(WorkspaceInformation *workspace_information, char **error_msg);
+
+char *workspace_information_to_stringified_json(WorkspaceInformation *workspace_information, char **error_msg);
+
+ResyncDaemonCommand *stringified_json_to_resync_daemon_command(const char *stringified_json_object, char **error_msg);
+
+ResyncDaemonCommand *json_to_resync_daemon_command(const cJSON *json_object, char **error_msg);
+
+cJSON *resync_daemon_command_to_json(ResyncDaemonCommand *resync_daemon_command, char **error_msg);
+
+char *resync_daemon_command_to_stringified_json(ResyncDaemonCommand *resync_daemon_command, char **error_msg);
 
 #endif //RESYNC_TYPES_H

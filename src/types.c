@@ -1,118 +1,211 @@
 #include "types.h"
 
-static char *
-get_string_value(const cJSON *object, const char *key, const bool required)
+static void
+destroy_ssh_connection_info_struct(SshConnectionInformation **info)
 {
-    cJSON *entry = cJSON_GetObjectItemCaseSensitive(object, key);
-    if (required && (entry == NULL || entry->valuestring == NULL)) {
-        fatal_custom_error("Error: Key '%s' is missing from \n'%s'", key, cJSON_Print(object));
+    if (info == NULL || *info == NULL) {
+        return;
     }
 
-    return entry == NULL ? NULL : resync_strdup(entry->valuestring);
+    if ((*info)->username != NULL) {
+        DO_FREE((*info)->username);
+    }
+
+    if ((*info)->path_to_identity_file != NULL) {
+        DO_FREE((*info)->path_to_identity_file);
+    }
+
+    if ((*info)->hostname != NULL) {
+        DO_FREE((*info)->hostname);
+    }
+
+    DO_FREE(*info);
 }
 
+static void
+destroy_rsync_daemon_connection_info_struct(RsyncConnectionInformation **info) {
+    if (info == NULL || *info == NULL) {
+        return;
+    }
+
+    if ((*info)->username != NULL) {
+        DO_FREE((*info)->username);
+    }
+
+    if ((*info)->hostname != NULL) {
+        DO_FREE((*info)->hostname);
+    }
+
+    DO_FREE(*info);
+}
+
+static void
+destroy_remote_system_struct(RemoteWorkspaceMetadata **remote_system_ptr)
+{
+    if (remote_system_ptr == NULL || *remote_system_ptr == NULL) {
+        return;
+    }
+
+    RemoteWorkspaceMetadata *remote_system = *remote_system_ptr;
+
+    if (remote_system->remote_workspace_root_path != NULL) {
+        DO_FREE(remote_system->remote_workspace_root_path);
+    }
+
+    switch (remote_system->connection_type) {
+        case SSH:
+            destroy_ssh_connection_info_struct(&remote_system->connection_information.sshConnectionInformation);
+            break;
+        case SSH_HOST_ALIAS:
+            if (remote_system->connection_information.ssh_host_alias != NULL) {
+                DO_FREE(remote_system->connection_information.ssh_host_alias);
+            }
+            break;
+        case RSYNC_DAEMON:
+            destroy_rsync_daemon_connection_info_struct(&remote_system->connection_information.rsyncConnectionInformation);
+            break;
+        default:
+            fatal_custom_error("Cannot free connection info's memory as the connection type is unknown");
+    }
+
+    DO_FREE(remote_system);
+}
+
+
 static cJSON *
-stringified_json_to_cJSON(const char *stringified_json_object)
+stringified_json_to_cJSON(const char *stringified_json_object, char **error_msg)
 {
     cJSON *object = cJSON_Parse(stringified_json_object);
     if (object == NULL) {
         const char *error_ptr = cJSON_GetErrorPtr();
         if (error_ptr != NULL) {
-            fatal_custom_error("Error parsing JSON object before: \n'%s'", error_ptr);
+            *error_msg = format_string("Error parsing JSON object before: \n'%s'", error_ptr);
         }
-        fatal_custom_error("Error parsing stringified JSON object \n'%s'", stringified_json_object);
+        *error_msg = format_string("Error parsing stringified JSON object: \n'%s'", stringified_json_object);
     }
 
     return object;
 }
 
 static SshConnectionInformation *
-extract_ssh_connection_information(const cJSON *connection_info_object)
+extract_ssh_connection_information(const cJSON *connection_info_object, char **error_msg)
 {
+    cJSON *entry;
     SshConnectionInformation *sshConnectionInformation = (SshConnectionInformation *) do_malloc(sizeof(SshConnectionInformation));
 
-    sshConnectionInformation->username = get_string_value(
-            connection_info_object,
-            KEY_SSH_CONNECTION_INFO_USERNAME,
-            false
-    );
+    entry = cJSON_GetObjectItemCaseSensitive(connection_info_object, KEY_SSH_CONNECTION_INFO_HOSTNAME);
+    if (STRING_VAL_EXISTS(entry)) {
+        sshConnectionInformation->hostname = resync_strdup(entry->valuestring);
+    } else {
+        *error_msg = JSON_MEMBER_MISSING(KEY_SSH_CONNECTION_INFO_HOSTNAME, connection_info_object);
+        goto error_out;
+    }
 
-    sshConnectionInformation->hostname = get_string_value(
-            connection_info_object,
-            KEY_SSH_CONNECTION_INFO_HOSTNAME,
-            true
-    );
+    entry = cJSON_GetObjectItemCaseSensitive(connection_info_object, KEY_SSH_CONNECTION_INFO_USERNAME);
+    if (STRING_VAL_EXISTS(entry)) {
+        sshConnectionInformation->username = resync_strdup(entry->valuestring);
+    }
 
-    sshConnectionInformation->path_to_identity_file = get_string_value(
-            connection_info_object,
-            KEY_SSH_CONNECTION_INFO_IDENTITY_FILE,
-            false
-    );
+    entry = cJSON_GetObjectItemCaseSensitive(connection_info_object, KEY_SSH_CONNECTION_INFO_IDENTITY_FILE);
+    if (STRING_VAL_EXISTS(entry)) {
+        sshConnectionInformation->path_to_identity_file = resync_strdup(entry->valuestring);
+    }
 
     return sshConnectionInformation;
+
+error_out:
+    DO_FREE(sshConnectionInformation);
+    return NULL;
 }
 
 static RsyncConnectionInformation *
-extract_rsync_daemon_connection_information(const cJSON *connection_info_object)
+extract_rsync_daemon_connection_information(const cJSON *connection_info_object, char **error_msg)
 {
+    cJSON *entry;
     RsyncConnectionInformation *rsyncConnectionInformation = (RsyncConnectionInformation *) do_malloc(sizeof(RsyncConnectionInformation));
 
-    rsyncConnectionInformation->username = get_string_value(
-            connection_info_object,
-            KEY_RSYNC_DAEMON_CONNECTION_INFO_USERNAME,
-            false
-    );
+    entry = cJSON_GetObjectItemCaseSensitive(connection_info_object, KEY_RSYNC_DAEMON_CONNECTION_INFO_USERNAME);
+    if (STRING_VAL_EXISTS(entry)) {
+        rsyncConnectionInformation->username = resync_strdup(entry->valuestring);
+    }
 
-    rsyncConnectionInformation->hostname = get_string_value(
-            connection_info_object,
-            KEY_RSYNC_DAEMON_CONNECTION_INFO_HOSTNAME,
-            true
-    );
+    entry = cJSON_GetObjectItemCaseSensitive(connection_info_object, KEY_RSYNC_DAEMON_CONNECTION_INFO_PORT);
+    if (entry != NULL) {
 
-    cJSON *port_entry = cJSON_GetObjectItemCaseSensitive(connection_info_object, KEY_RSYNC_DAEMON_CONNECTION_INFO_PORT);
-    if (port_entry != NULL) {
-        if (port_entry->valuestring != NULL) {
-            fatal_custom_error(
-                    "Error: Invalid port value '%s' found in connection info definition \n'%s'",
-                    port_entry->valuestring,
-                    cJSON_Print(connection_info_object)
+        if (entry->valuestring != NULL) {
+            *error_msg = format_string(
+                    "Invalid port value '%s' found in connection info struct: \n'%s'",
+                    entry->valuestring,
+                    JSON_PRINT(connection_info_object)
             );
+            goto error_out;
         }
 
-        if (port_entry->valueint < 0 || port_entry->valueint > 65535) {
-            fatal_custom_error(
-                    "Error: Invalid port number '%d' found in connection info definition \n'%s'",
-                    port_entry->valueint,
-                    cJSON_Print(connection_info_object)
+        if (entry->valueint < MIN_PORT_NUMBER || entry->valueint > MAX_PORT_NUMBER) {
+            *error_msg = format_string(
+                    "Port value '%d' is outside of range [%d, %d]: \n'%s'",
+                    entry->valueint,
+                    MIN_PORT_NUMBER,
+                    MAX_PORT_NUMBER,
+                    JSON_PRINT(connection_info_object)
             );
+            goto error_out;
         }
-        rsyncConnectionInformation->port = port_entry->valueint;
+
+        rsyncConnectionInformation->port = entry->valueint;
     } else {
         rsyncConnectionInformation->port = -1;
     }
 
+    entry = cJSON_GetObjectItemCaseSensitive(connection_info_object, KEY_RSYNC_DAEMON_CONNECTION_INFO_HOSTNAME);
+    if (STRING_VAL_EXISTS(entry)) {
+        rsyncConnectionInformation->hostname = resync_strdup(entry->valuestring);
+    } else {
+        *error_msg = JSON_MEMBER_MISSING(KEY_RSYNC_DAEMON_CONNECTION_INFO_HOSTNAME, connection_info_object);
+        goto error_out;
+    }
+
     return rsyncConnectionInformation;
+
+error_out:
+    DO_FREE(rsyncConnectionInformation);
+    return NULL;
 }
 
 static char *
-extract_ssh_host_alias_connection_information(const cJSON *connection_info_object)
+extract_ssh_host_alias_connection_information(const cJSON *connection_info_object, char **error_msg)
 {
-    return get_string_value(connection_info_object, KEY_SSH_HOST_ALIAS_CONNECTION_INFO_NAME, true);
+    cJSON *entry = cJSON_GetObjectItemCaseSensitive(connection_info_object, KEY_SSH_HOST_ALIAS_CONNECTION_INFO_NAME);
+    if (!STRING_VAL_EXISTS(entry)) {
+        *error_msg = JSON_MEMBER_MISSING(KEY_SSH_HOST_ALIAS_CONNECTION_INFO_NAME, connection_info_object);
+        return NULL;
+    }
+
+    return resync_strdup(entry->valuestring);
 }
 
 static RemoteWorkspaceMetadata *
-remote_system_json_to_remote_workspace_metadata(const cJSON *remote_system_object)
+remote_system_json_to_remote_workspace_metadata(const cJSON *remote_system_object, char **error_msg)
 {
+    cJSON *entry;
     RemoteWorkspaceMetadata *remote_ws_metadata = (RemoteWorkspaceMetadata *) do_malloc(sizeof(RemoteWorkspaceMetadata));
 
-    remote_ws_metadata->remote_workspace_root_path = get_string_value(
-            remote_system_object,
-            KEY_REMOTE_WORKSPACE_ROOT_PATH,
-            true
-    );
+    entry = cJSON_GetObjectItemCaseSensitive(remote_system_object, KEY_REMOTE_WORKSPACE_ROOT_PATH);
+    if (STRING_VAL_EXISTS(entry)) {
+        remote_ws_metadata->remote_workspace_root_path = resync_strdup(entry->valuestring);
+    } else {
+        DO_FREE(remote_ws_metadata);
+        *error_msg = JSON_MEMBER_MISSING(KEY_REMOTE_WORKSPACE_ROOT_PATH, remote_system_object);
+        return NULL;
+    }
 
-    char *connection_type = get_string_value(remote_system_object, KEY_CONNECTION_TYPE, true);
+    entry = cJSON_GetObjectItemCaseSensitive(remote_system_object, KEY_CONNECTION_TYPE);
+    if (!STRING_VAL_EXISTS(entry)) {
+        *error_msg = JSON_MEMBER_MISSING(KEY_CONNECTION_TYPE, remote_system_object);
+        return NULL;
+    }
 
+    char *connection_type = entry->valuestring;
     if (IS_SSH_CONNECTION_TYPE(connection_type)) {
         remote_ws_metadata->connection_type = SSH;
     } else if (IS_SSH_HOST_ALIAS_CONNECTION_TYPE(connection_type)) {
@@ -120,61 +213,72 @@ remote_system_json_to_remote_workspace_metadata(const cJSON *remote_system_objec
     } else if (IS_RSYNC_DAEMON_CONNECTION_TYPE(connection_type)) {
         remote_ws_metadata->connection_type = RSYNC_DAEMON;
     } else {
-        fatal_custom_error(
-                "Error: Invalid connection type '%s' specified for remote system \n'%s'",
-                connection_type,
-                cJSON_Print(remote_system_object)
-        );
+        *error_msg = format_string("Invalid connection type '%s' specified for remote system: \n'%s'", connection_type, JSON_PRINT(remote_system_object));
+        return NULL;
     }
 
-    cJSON *connection_info_entry = cJSON_GetObjectItemCaseSensitive(remote_system_object, KEY_CONNECTION_INFORMATION);
-    if (connection_info_entry == NULL) {
-        fatal_custom_error(
-                "Error: No connection information of type '%s' specified in remote system definition \n'%s'",
-                connection_type,
-                cJSON_Print(remote_system_object)
-        );
+    entry = cJSON_GetObjectItemCaseSensitive(remote_system_object, KEY_CONNECTION_INFORMATION);
+    if (entry == NULL) {
+        *error_msg = JSON_MEMBER_MISSING(KEY_CONNECTION_INFORMATION, remote_system_object);
+        goto error_out;
     }
 
+    void *info;
     switch (remote_ws_metadata->connection_type) {
         case SSH:
-            remote_ws_metadata->connection_information.sshConnectionInformation =
-                    extract_ssh_connection_information(connection_info_entry);
+            info = extract_ssh_connection_information(entry, error_msg);
+            remote_ws_metadata->connection_information.sshConnectionInformation = (SshConnectionInformation *) info;
             break;
         case SSH_HOST_ALIAS:
-            remote_ws_metadata->connection_information.ssh_host_alias =
-                    extract_ssh_host_alias_connection_information(connection_info_entry);
+            info = extract_ssh_host_alias_connection_information(entry, error_msg);
+            remote_ws_metadata->connection_information.ssh_host_alias = (char *) info;
             break;
         case RSYNC_DAEMON:
-            remote_ws_metadata->connection_information.rsyncConnectionInformation =
-                    extract_rsync_daemon_connection_information(connection_info_entry);
+            info = extract_rsync_daemon_connection_information(entry, error_msg);
+            remote_ws_metadata->connection_information.rsyncConnectionInformation = (RsyncConnectionInformation *) info;
             break;
         default:
-            fatal_custom_error("Unknown error related to connection type of '%s' occurred", cJSON_Print(remote_system_object));
+            *error_msg = format_string("Unknown error related to connection type of '%s' occurred", JSON_PRINT(remote_system_object));
+            goto error_out;
     }
 
-    DO_FREE(connection_type);
+    if (info == NULL) {
+        goto error_out;
+    }
+
     return remote_ws_metadata;
+
+error_out:
+    DO_FREE(remote_ws_metadata->remote_workspace_root_path);
+    DO_FREE(remote_ws_metadata);
+    return NULL;
 }
 
 WorkspaceInformation *
-stringified_json_to_workspace_information(const char *stringified_json_object)
+stringified_json_to_workspace_information(const char *stringified_json_object, char **error_msg)
 {
-    cJSON *json_object = stringified_json_to_cJSON(stringified_json_object);
-    return json_to_workspace_information(json_object);
+    cJSON *json_object = stringified_json_to_cJSON(stringified_json_object, error_msg);
+    if (json_object == NULL) {
+        return NULL;
+    }
+
+    return json_to_workspace_information(json_object, error_msg);
 }
 
 WorkspaceInformation *
-json_to_workspace_information(const cJSON *json_object)
+json_to_workspace_information(const cJSON *json_object, char **error_msg)
 {
     WorkspaceInformation *workspace_information = (WorkspaceInformation *) do_malloc(sizeof(WorkspaceInformation));
     workspace_information->remote_systems = NULL;
 
-    workspace_information->local_workspace_root_path = get_string_value(
-            json_object,
-            KEY_LOCAL_WORKSPACE_ROOT_PATH,
-            true
-    );
+    cJSON *entry = cJSON_GetObjectItemCaseSensitive(json_object, KEY_LOCAL_WORKSPACE_ROOT_PATH);
+    if (STRING_VAL_EXISTS(entry)) {
+        workspace_information->local_workspace_root_path = resync_strdup(entry->valuestring);
+    } else {
+        DO_FREE(workspace_information);
+        *error_msg = JSON_MEMBER_MISSING(KEY_LOCAL_WORKSPACE_ROOT_PATH, json_object);
+        return NULL;
+    }
 
     cJSON *remote_system_entry;
     cJSON *remote_systems = cJSON_GetObjectItemCaseSensitive(json_object, KEY_REMOTE_SYSTEMS);
@@ -182,19 +286,35 @@ json_to_workspace_information(const cJSON *json_object)
     int remote_systems_counter = 0;
     cJSON_ArrayForEach(remote_system_entry, remote_systems) {
         remote_systems_counter++;
-        RemoteWorkspaceMetadata *remote_ws_metadata = remote_system_json_to_remote_workspace_metadata(remote_system_entry);
+
+        RemoteWorkspaceMetadata *remote_ws_metadata = remote_system_json_to_remote_workspace_metadata(remote_system_entry, error_msg);
+        if (remote_ws_metadata == NULL) {
+            goto error_out;
+        }
+
         LL_APPEND(workspace_information->remote_systems, remote_ws_metadata);
     }
 
     if (remote_systems_counter == 0) {
-        fatal_custom_error(
-                "Error: No remote systems (expected key: '%s') specified in workspace definition \n'%s'",
+        *error_msg = format_string(
+                "No remote systems (expected key '%s') specified in workspace definition: \n'%s'",
                 KEY_REMOTE_SYSTEMS,
-                cJSON_Print(json_object)
+                JSON_PRINT(json_object)
         );
+        goto error_out;
     }
 
     return workspace_information;
+
+error_out:
+    DO_FREE(workspace_information->local_workspace_root_path);
+    RemoteWorkspaceMetadata *del_entry, *del_tmp;
+    LL_FOREACH_SAFE(workspace_information->remote_systems, del_entry, del_tmp) {
+        LL_DELETE(workspace_information->remote_systems, del_entry);
+        destroy_remote_system_struct(&del_entry);
+    }
+    DO_FREE(workspace_information);
+    return NULL;
 }
 
 static cJSON *
@@ -242,14 +362,14 @@ create_json_number(const int number)
 }
 
 static cJSON *
-ssh_connection_information_to_json(SshConnectionInformation *ssh_info)
+ssh_connection_information_to_json(SshConnectionInformation *ssh_info, char **error_msg)
 {
     if (ssh_info == NULL) {
-        fatal_custom_error("Error: SSH connection information struct is missing");
+        *error_msg = resync_strdup("SSH connection information struct is missing");
+        return NULL;
     }
 
     cJSON *connection_information = create_json_object();
-
     if (ssh_info->username != NULL) {
         cJSON *username = create_json_string(ssh_info->username);
         cJSON_AddItemToObject(connection_information, KEY_SSH_CONNECTION_INFO_USERNAME, username);
@@ -264,20 +384,26 @@ ssh_connection_information_to_json(SshConnectionInformation *ssh_info)
         cJSON *hostname = create_json_string(ssh_info->hostname);
         cJSON_AddItemToObject(connection_information, KEY_SSH_CONNECTION_INFO_HOSTNAME, hostname);
     } else {
-        fatal_custom_error(
+        *error_msg = format_string(
                 "Error: SSH connection information struct is missing the required '%s' entry",
                 KEY_SSH_CONNECTION_INFO_HOSTNAME
         );
+        goto error_out;
     }
 
     return connection_information;
+
+error_out:
+    cJSON_Delete(connection_information);
+    return NULL;
 }
 
 static cJSON *
-rsync_daemon_connection_information_to_json(RsyncConnectionInformation *rsync_daemon_info)
+rsync_daemon_connection_information_to_json(RsyncConnectionInformation *rsync_daemon_info, char **error_msg)
 {
     if (rsync_daemon_info == NULL) {
-        fatal_custom_error("Error: RSYNC daemon connection information struct is missing");
+        *error_msg = resync_strdup("RSYNC daemon connection information struct is missing");
+        return NULL;
     }
 
     cJSON *connection_information = create_json_object();
@@ -287,9 +413,10 @@ rsync_daemon_connection_information_to_json(RsyncConnectionInformation *rsync_da
         cJSON_AddItemToObject(connection_information, KEY_RSYNC_DAEMON_CONNECTION_INFO_USERNAME, username);
     }
 
-    if (rsync_daemon_info->port >= 0) {
-        if (rsync_daemon_info->port > 65535) {
-            fatal_custom_error("Error: Invalid port '%d' found", rsync_daemon_info->port);
+    if (rsync_daemon_info->port >= MIN_PORT_NUMBER) {
+        if (rsync_daemon_info->port > MAX_PORT_NUMBER) {
+            *error_msg = format_string("Invalid port '%d' found", rsync_daemon_info->port);
+            goto error_out;
         }
 
         cJSON *port = create_json_number(rsync_daemon_info->port);
@@ -300,17 +427,22 @@ rsync_daemon_connection_information_to_json(RsyncConnectionInformation *rsync_da
         cJSON *hostname = create_json_string(rsync_daemon_info->hostname);
         cJSON_AddItemToObject(connection_information, KEY_RSYNC_DAEMON_CONNECTION_INFO_HOSTNAME, hostname);
     } else {
-        fatal_custom_error(
+        *error_msg = format_string (
                 "Error: RSYNC daemon connection information struct is missing the required '%s' entry",
                 KEY_RSYNC_DAEMON_CONNECTION_INFO_HOSTNAME
         );
+        goto error_out;
     }
 
     return connection_information;
+
+error_out:
+    cJSON_Delete(connection_information);
+    return NULL;
 }
 
 static cJSON *
-ssh_host_alias_connection_information_to_json(char *ssh_host_alias)
+ssh_host_alias_connection_information_to_json(char *ssh_host_alias, char **error_msg)
 {
     cJSON *connection_information = create_json_object();
 
@@ -318,17 +450,19 @@ ssh_host_alias_connection_information_to_json(char *ssh_host_alias)
         cJSON *host_alias = create_json_string(ssh_host_alias);
         cJSON_AddItemToObject(connection_information, KEY_SSH_HOST_ALIAS_CONNECTION_INFO_NAME, host_alias);
     } else {
-        fatal_custom_error(
+        *error_msg = format_string (
                 "Error: SSH host alias connection information is missing required '%s' entry",
                 KEY_SSH_HOST_ALIAS_CONNECTION_INFO_NAME
         );
+        cJSON_Delete(connection_information);
+        return NULL;
     }
 
     return connection_information;
 }
 
 static cJSON *
-remote_workspace_metadata_to_json(RemoteWorkspaceMetadata *remote_workspace_metadata)
+remote_workspace_metadata_to_json(RemoteWorkspaceMetadata *remote_workspace_metadata, char **error_msg)
 {
     cJSON *remote_system = create_json_object();
 
@@ -336,10 +470,8 @@ remote_workspace_metadata_to_json(RemoteWorkspaceMetadata *remote_workspace_meta
         cJSON *remote_workspace_root_path = create_json_string(remote_workspace_metadata->remote_workspace_root_path);
         cJSON_AddItemToObject(remote_system, KEY_REMOTE_WORKSPACE_ROOT_PATH, remote_workspace_root_path);
     } else {
-        fatal_custom_error(
-                "Error: Remote workspace struct is missing the required '%s' entry",
-                KEY_REMOTE_WORKSPACE_ROOT_PATH
-        );
+        *error_msg = format_string ("Error: Remote workspace struct is missing the required '%s' entry",KEY_REMOTE_WORKSPACE_ROOT_PATH);
+        goto error_out;
     }
 
     cJSON *connection_type;
@@ -348,57 +480,76 @@ remote_workspace_metadata_to_json(RemoteWorkspaceMetadata *remote_workspace_meta
         case SSH:
             connection_type = create_json_string(CONNECTION_TYPE_SSH);
             connection_information = ssh_connection_information_to_json(
-                    remote_workspace_metadata->connection_information.sshConnectionInformation
+                    remote_workspace_metadata->connection_information.sshConnectionInformation,
+                    error_msg
             );
             break;
         case SSH_HOST_ALIAS:
             connection_type = create_json_string(CONNECTION_TYPE_SSH_HOST_ALIAS);
             connection_information = ssh_host_alias_connection_information_to_json(
-                    remote_workspace_metadata->connection_information.ssh_host_alias
+                    remote_workspace_metadata->connection_information.ssh_host_alias,
+                    error_msg
             );
             break;
         case RSYNC_DAEMON:
             connection_type = create_json_string(CONNECTION_TYPE_RSYNC_DAEMON);
             connection_information = rsync_daemon_connection_information_to_json(
-                    remote_workspace_metadata->connection_information.rsyncConnectionInformation
+                    remote_workspace_metadata->connection_information.rsyncConnectionInformation,
+                    error_msg
             );
             break;
         default:
-            fatal_custom_error(
+            *error_msg = format_string(
                     "Unknown error related to connection type '%s' of remote system",
                     remote_workspace_metadata->connection_type
             );
+            goto error_out;
+    }
+
+    if (connection_information == NULL) {
+        goto error_out;
     }
 
     cJSON_AddItemToObject(remote_system, KEY_CONNECTION_TYPE, connection_type);
     cJSON_AddItemToObject(remote_system, KEY_CONNECTION_INFORMATION, connection_information);
 
     return remote_system;
+
+error_out:
+    cJSON_Delete(remote_system);
+    return NULL;
 }
 
 char *
-workspace_information_to_stringified_json(WorkspaceInformation *workspace_information)
+workspace_information_to_stringified_json(WorkspaceInformation *workspace_information, char **error_msg)
 {
-    cJSON *json_object = workspace_information_to_json(workspace_information);
+    cJSON *json_object = workspace_information_to_json(workspace_information, error_msg);
+    if (json_object == NULL) {
+        return NULL;
+    }
+
     char *stringified_json_object = cJSON_Print(json_object);
     cJSON_Delete(json_object);
     return stringified_json_object;
 }
 
 cJSON *
-workspace_information_to_json(WorkspaceInformation *workspace_information)
+workspace_information_to_json(WorkspaceInformation *workspace_information, char **error_msg)
 {
+    if (workspace_information == NULL) {
+        *error_msg = resync_strdup("workspace_information struct is NULL");
+        return NULL;
+    }
+
     cJSON *json_ws_information = create_json_object();
 
-    if (workspace_information->local_workspace_root_path != NULL) {
-        cJSON *local_workspace_root_path = create_json_string(workspace_information->local_workspace_root_path);
-        cJSON_AddItemToObject(json_ws_information, KEY_LOCAL_WORKSPACE_ROOT_PATH, local_workspace_root_path);
-    } else {
-        fatal_custom_error(
-                "Error: workspace information struct is missing the required '%s' entry",
-                KEY_LOCAL_WORKSPACE_ROOT_PATH
-        );
+    if (workspace_information->local_workspace_root_path == NULL) {
+        *error_msg = format_string("workspace_information struct is missing a value for '%s'",KEY_LOCAL_WORKSPACE_ROOT_PATH);
+        goto error_out;
     }
+
+    cJSON *local_workspace_root_path = create_json_string(workspace_information->local_workspace_root_path);
+    cJSON_AddItemToObject(json_ws_information, KEY_LOCAL_WORKSPACE_ROOT_PATH, local_workspace_root_path);
 
     cJSON *remote_systems = create_json_array();
     cJSON_AddItemToObject(json_ws_information, KEY_REMOTE_SYSTEMS, remote_systems);
@@ -407,13 +558,23 @@ workspace_information_to_json(WorkspaceInformation *workspace_information)
     RemoteWorkspaceMetadata *entry;
     LL_FOREACH(workspace_information->remote_systems, entry) {
         remote_systems_counter++;
-        cJSON *remote_system = remote_workspace_metadata_to_json(entry);
+
+        cJSON *remote_system = remote_workspace_metadata_to_json(entry, error_msg);
+        if (remote_system == NULL) {
+            goto error_out;
+        }
+
         cJSON_AddItemToArray(remote_systems, remote_system);
     }
 
     if (remote_systems_counter == 0) {
-        fatal_custom_error("Error: workspace information struct does not contain any remote system definitions");
+        *error_msg = resync_strdup("workspace information struct does not contain any remote system definitions");
+        goto error_out;
     }
 
     return json_ws_information;
+
+error_out:
+    cJSON_Delete(json_ws_information);
+    return NULL;
 }

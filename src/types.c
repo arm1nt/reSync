@@ -578,3 +578,139 @@ error_out:
     cJSON_Delete(json_ws_information);
     return NULL;
 }
+
+ResyncDaemonCommand *
+stringified_json_to_resync_daemon_command(const char *stringified_json_object, char **error_msg)
+{
+    if (stringified_json_object == NULL) {
+        *error_msg = resync_strdup("No stringified json object provided");
+        return NULL;
+    }
+
+    cJSON *json_object = stringified_json_to_cJSON(stringified_json_object, error_msg);
+    if (json_object == NULL) {
+        return NULL;
+    }
+
+    return json_to_resync_daemon_command(json_object, error_msg);
+}
+
+ResyncDaemonCommand *
+json_to_resync_daemon_command(const cJSON *json_object, char **error_msg)
+{
+    if (json_object == NULL) {
+        *error_msg = resync_strdup("No json object provided");
+        return NULL;
+    }
+
+    cJSON *entry;
+    ResyncDaemonCommand *resync_daemon_command = (ResyncDaemonCommand *) do_malloc(sizeof(ResyncDaemonCommand));
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_object, KEY_DAEMON_CMD_TYPE);
+    if (!STRING_VAL_EXISTS(entry)) {
+        *error_msg = JSON_MEMBER_MISSING(KEY_DAEMON_CMD_TYPE, json_object);
+        goto error_out;
+    }
+
+    char *stringified_command_type = entry->valuestring;
+    if (IS_ADD_WORKSPACE_CMD(stringified_command_type)) {
+        resync_daemon_command->command_type = ADD_WORKSPACE;
+    } else if (IS_ADD_REMOTE_SYSTEM_CMD(stringified_command_type)) {
+        resync_daemon_command->command_type = ADD_REMOTE_SYSTEM;
+    } else if (IS_REMOVE_WORKSPACE_CMD(stringified_command_type)) {
+        resync_daemon_command->command_type = REMOVE_WORKSPACE;
+    } else if (IS_REMOVE_REMOTE_SYSTEM_CMD(stringified_command_type)) {
+        resync_daemon_command->command_type = REMOVE_REMOTE_SYSTEM;
+    } else {
+        *error_msg = format_string(
+                "Found invalid command type '%s' in resync_command JSON : \n'%s'",
+                stringified_command_type,
+                JSON_PRINT(json_object)
+        );
+        goto error_out;
+    }
+
+    cJSON *workspace_info_json = cJSON_GetObjectItemCaseSensitive(json_object, KEY_DAEMON_CMD_WORKSPACE_INFO);
+    if (workspace_info_json == NULL) {
+        *error_msg = JSON_MEMBER_MISSING(KEY_DAEMON_CMD_WORKSPACE_INFO, json_object);
+        goto error_out;
+    }
+
+    WorkspaceInformation *ws_info = json_to_workspace_information(workspace_info_json, error_msg);
+    if (ws_info == NULL) {
+        goto error_out;
+    }
+
+    resync_daemon_command->workspace_information = ws_info;
+    return resync_daemon_command;
+
+error_out:
+    DO_FREE(resync_daemon_command);
+    return NULL;
+}
+
+char *
+resync_daemon_command_to_stringified_json(ResyncDaemonCommand *resync_daemon_command, char **error_msg)
+{
+    if (resync_daemon_command == NULL) {
+        *error_msg = resync_strdup("No resync_daemon_command struct provided");
+        return NULL;
+    }
+
+    cJSON *json_object = resync_daemon_command_to_json(resync_daemon_command, error_msg);
+    if (json_object == NULL) {
+        return NULL;
+    }
+
+    char *stringified_json_object = JSON_PRINT(json_object);
+    cJSON_Delete(json_object);
+    return stringified_json_object;
+}
+
+cJSON *
+resync_daemon_command_to_json(ResyncDaemonCommand *resync_daemon_command, char **error_msg)
+{
+    if (resync_daemon_command == NULL) {
+        *error_msg = resync_strdup("No resync_daemon_command struct provided");
+        return NULL;
+    }
+
+    cJSON *json_object = create_json_object();
+
+    cJSON *command_type = NULL;
+    switch (resync_daemon_command->command_type) {
+        case ADD_WORKSPACE:
+            command_type = create_json_string(CMD_TYPE_ADD_WORKSPACE);
+            break;
+        case ADD_REMOTE_SYSTEM:
+            command_type = create_json_string(CMD_TYPE_ADD_REMOTE_SYSTEM);
+            break;
+        case REMOVE_WORKSPACE:
+            command_type = create_json_string(CMD_TYPE_REMOVE_WORKSPACE);
+            break;
+        case REMOVE_REMOTE_SYSTEM:
+            command_type = create_json_string(CMD_TYPE_REMOVE_REMOTE_SYSTEM);
+            break;
+        default:
+            *error_msg = resync_strdup("Encountered unknown reSync daemon command");
+            goto error_out;
+    }
+    cJSON_AddItemToObject(json_object, KEY_DAEMON_CMD_TYPE, command_type);
+
+    if (resync_daemon_command->workspace_information == NULL) {
+        *error_msg = format_string("resync_daemon_command struct is missing a value for member: '%s'", KEY_DAEMON_CMD_WORKSPACE_INFO);
+        goto error_out;
+    }
+
+    cJSON *ws_info = workspace_information_to_json(resync_daemon_command->workspace_information, error_msg);
+    if (ws_info == NULL) {
+        goto error_out;
+    }
+    cJSON_AddItemToObject(json_object, KEY_DAEMON_CMD_WORKSPACE_INFO, ws_info);
+
+    return json_object;
+
+error_out:
+    cJSON_Delete(json_object);
+    return NULL;
+}

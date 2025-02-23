@@ -68,6 +68,7 @@
 #define MAX_PORT_NUMBER 65535
 
 typedef enum ConnectionType {
+    OTHER_CONNECTION_TYPE,
     SSH,
     SSH_HOST_ALIAS,
     RSYNC_DAEMON
@@ -103,15 +104,16 @@ typedef struct WorkspaceInformation {
     RemoteWorkspaceMetadata *remote_systems;
 } WorkspaceInformation;
 
-typedef enum ResyncCommand {
+typedef enum ResyncCommandType {
+    OTHER_RESYNC_COMMAND_TYPE,
     ADD_WORKSPACE,
     REMOVE_WORKSPACE,
     ADD_REMOTE_SYSTEM,
     REMOVE_REMOTE_SYSTEM
-} ResyncCommand;
+} ResyncCommandType;
 
 typedef struct ResyncDaemonCommand {
-    ResyncCommand command_type;
+    ResyncCommandType command_type;
     WorkspaceInformation *workspace_information;
 } ResyncDaemonCommand;
 
@@ -136,5 +138,13 @@ ResyncDaemonCommand *json_to_resync_daemon_command(const cJSON *json_object, cha
 cJSON *resync_daemon_command_to_json(ResyncDaemonCommand *resync_daemon_command, char **error_msg);
 
 char *resync_daemon_command_to_stringified_json(ResyncDaemonCommand *resync_daemon_command, char **error_msg);
+
+ResyncCommandType string_to_resync_command_type(const char *stringified_command_type);
+
+char *resync_command_type_to_string(ResyncCommandType command_type);
+
+ConnectionType string_to_connection_type(const char *stringified_connection_type);
+
+char *connection_type_to_string(ConnectionType connection_type);
 
 #endif //RESYNC_TYPES_H

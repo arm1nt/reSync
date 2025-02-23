@@ -7,6 +7,8 @@
 #include <sys/un.h>
 #include <sys/socket.h>
 
+#define DEFAULT_RESYNC_DAEMON_SOCKET_PATH "/tmp/reSync_cmd.socket"
+
 #define DEFAULT_UNIX_SOCKET_BACKLOG_SIZE 20
 
 int create_unix_server_socket(const char *socket_path);

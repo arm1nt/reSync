@@ -280,7 +280,7 @@ validate_remote_workspace_path(const char *remote_ws_path)
 
     char *error_msg;
     if (!validate_absolute_path(remote_ws_path, &error_msg)) {
-        LOG("The given path for the remote workspace ('%s') is not an absolute path!");
+        LOG("The given path for the remote workspace ('%s') is not an absolute path!", remote_ws_path);
         return false;
     }
 

@@ -92,7 +92,7 @@ validate_identity_file(const char *value)
     }
 
     char *error_msg;
-    if (!validate_is_absolute_path(value, &error_msg)) {
+    if (!validate_absolute_path(value, &error_msg)) {
         LOG_ERROR("The given path '%s' for the identity file is not an absolute path!", value);
         return false;
     }
@@ -279,7 +279,7 @@ validate_remote_workspace_path(const char *remote_ws_path)
     }
 
     char *error_msg;
-    if (!validate_is_absolute_path(remote_ws_path, &error_msg)) {
+    if (!validate_absolute_path(remote_ws_path, &error_msg)) {
         LOG("The given path for the remote workspace ('%s') is not an absolute path!");
         return false;
     }
@@ -298,7 +298,7 @@ validate_local_workspace_path(const char *local_ws_path)
     }
 
     char *error_msg;
-    if (!validate_is_absolute_path(local_ws_path, &error_msg)) {
+    if (!validate_absolute_path(local_ws_path, &error_msg)) {
         LOG("The given path for the local workspace ('%s') is not an absolute path!", local_ws_path);
         return false;
     }

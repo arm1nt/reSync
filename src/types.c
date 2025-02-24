@@ -153,7 +153,7 @@ static SshConnectionInformation *
 extract_ssh_connection_information(const cJSON *connection_info_object, char **error_msg)
 {
     cJSON *entry;
-    SshConnectionInformation *sshConnectionInformation = (SshConnectionInformation *) do_malloc(sizeof(SshConnectionInformation));
+    SshConnectionInformation *sshConnectionInformation = (SshConnectionInformation *) do_calloc(1, sizeof(SshConnectionInformation));
 
     entry = cJSON_GetObjectItemCaseSensitive(connection_info_object, KEY_SSH_CONNECTION_INFO_HOSTNAME);
     if (STRING_VAL_EXISTS(entry)) {
@@ -250,7 +250,7 @@ static RemoteWorkspaceMetadata *
 remote_system_json_to_remote_workspace_metadata(const cJSON *remote_system_object, char **error_msg)
 {
     cJSON *entry;
-    RemoteWorkspaceMetadata *remote_ws_metadata = (RemoteWorkspaceMetadata *) do_malloc(sizeof(RemoteWorkspaceMetadata));
+    RemoteWorkspaceMetadata *remote_ws_metadata = (RemoteWorkspaceMetadata *) do_calloc(1, sizeof(RemoteWorkspaceMetadata));
 
     entry = cJSON_GetObjectItemCaseSensitive(remote_system_object, KEY_REMOTE_WORKSPACE_ROOT_PATH);
     if (STRING_VAL_EXISTS(entry)) {
@@ -330,7 +330,7 @@ stringified_json_to_workspace_information(const char *stringified_json_object, c
 WorkspaceInformation *
 json_to_workspace_information(const cJSON *json_object, char **error_msg)
 {
-    WorkspaceInformation *workspace_information = (WorkspaceInformation *) do_malloc(sizeof(WorkspaceInformation));
+    WorkspaceInformation *workspace_information = (WorkspaceInformation *) do_calloc(1, sizeof(WorkspaceInformation));
     workspace_information->remote_systems = NULL;
 
     cJSON *entry = cJSON_GetObjectItemCaseSensitive(json_object, KEY_LOCAL_WORKSPACE_ROOT_PATH);
@@ -523,7 +523,7 @@ ssh_host_alias_connection_information_to_json(char *ssh_host_alias, char **error
     return connection_information;
 }
 
-static cJSON *
+cJSON *
 remote_workspace_metadata_to_json(RemoteWorkspaceMetadata *remote_workspace_metadata, char **error_msg)
 {
     cJSON *remote_system = create_json_object();
@@ -666,7 +666,7 @@ json_to_resync_daemon_command(const cJSON *json_object, char **error_msg)
     }
 
     cJSON *entry;
-    ResyncDaemonCommand *resync_daemon_command = (ResyncDaemonCommand *) do_malloc(sizeof(ResyncDaemonCommand));
+    ResyncDaemonCommand *resync_daemon_command = (ResyncDaemonCommand *) do_calloc(1, sizeof(ResyncDaemonCommand));
 
     entry = cJSON_GetObjectItemCaseSensitive(json_object, KEY_DAEMON_CMD_TYPE);
     if (!STRING_VAL_EXISTS(entry)) {

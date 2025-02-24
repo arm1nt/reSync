@@ -131,6 +131,8 @@ cJSON *workspace_information_to_json(WorkspaceInformation *workspace_information
 
 char *workspace_information_to_stringified_json(WorkspaceInformation *workspace_information, char **error_msg);
 
+cJSON *remote_workspace_metadata_to_json(RemoteWorkspaceMetadata *remote_workspace_metadata, char **error_msg);
+
 ResyncDaemonCommand *stringified_json_to_resync_daemon_command(const char *stringified_json_object, char **error_msg);
 
 ResyncDaemonCommand *json_to_resync_daemon_command(const cJSON *json_object, char **error_msg);

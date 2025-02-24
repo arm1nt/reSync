@@ -51,8 +51,6 @@ config_file_is_empty_array(const char *buffer)
 static bool
 write_config_file_from_buffer(char *buffer, char **error_msg)
 {
-    CLEAR_ERROR_MSG(error_msg);
-
     int config_file_fd = open(CONFIG_FILE_PATH, O_WRONLY);
     if (config_file_fd == -1) {
         SET_ERROR_MSG_RAW(
@@ -67,7 +65,7 @@ write_config_file_from_buffer(char *buffer, char **error_msg)
     }
 
     if (write(config_file_fd, buffer, strlen(buffer)) == -1) {
-        SET_ERROR_MSG_RAW(error_msg, format_string("Unable to update reSync configuration file: %s", strerror(errno)));
+        SET_ERROR_MSG_RAW(error_msg, format_string("Unable to write to reSync configuration file: %s", strerror(errno)));
         return false;
     }
 
@@ -77,10 +75,8 @@ write_config_file_from_buffer(char *buffer, char **error_msg)
 }
 
 static bool
-read_config_file_into_buffer(char **buf, char **error_msg) //TODO: pre-condition: buf != NULL
+read_config_file_into_buffer(char **buf, char **error_msg) //pre-condition: buf != NULL
 {
-    CLEAR_ERROR_MSG(error_msg);
-
     int config_file_fd = open(CONFIG_FILE_PATH, O_RDONLY);
     if (config_file_fd == -1) {
         SET_ERROR_MSG_RAW(
@@ -128,10 +124,49 @@ read_config_file_into_buffer(char **buf, char **error_msg) //TODO: pre-condition
 }
 
 static int
+get_exact_match_local_workspace(cJSON *config_entries_array, const char *path, cJSON **ws_info_json, char **error_msg)
+{
+    if (config_entries_array == NULL || path == NULL) {
+        SET_ERROR_MSG(error_msg, "Config entries array and path of local workspace must be specified");
+        *ws_info_json = NULL;
+        return -1;
+    }
+
+    cJSON *config_array_entry;
+    cJSON_ArrayForEach(config_array_entry, config_entries_array) {
+        WorkspaceInformation *ws_info_entry = json_to_workspace_information(config_array_entry, error_msg);
+
+        if (ws_info_entry == NULL) {
+            if (error_msg != NULL && *error_msg != NULL) {
+                SET_ERROR_MSG_WITH_CAUSE_RAW(
+                        error_msg,
+                        format_string("Configuration file does not contain all required members for entry \n'%s'\n", cJSON_Print(config_array_entry)),
+                        error_msg
+                );
+            } else {
+                SET_ERROR_MSG_RAW(
+                        error_msg,
+                        format_string("An unknown error occurred while parsing config file entry: \n%s")
+                );
+            }
+
+            *ws_info_json = NULL;
+            return -1;
+        }
+
+        if (is_equal(ws_info_entry->local_workspace_root_path, path)) {
+            *ws_info_json = config_array_entry;
+            return 1;
+        }
+    }
+
+    *ws_info_json = NULL;
+    return 0;
+}
+
+static int
 config_file_contains_workspace(cJSON *config_entries_array, WorkspaceInformation *ws_info, char **error_msg)
 {
-    CLEAR_ERROR_MSG(error_msg);
-
     if (config_entries_array == NULL || ws_info == NULL) {
         SET_ERROR_MSG(error_msg, "Config entries array and workspace info must be specified!");
         return -1;
@@ -169,29 +204,21 @@ config_file_contains_workspace(cJSON *config_entries_array, WorkspaceInformation
     return 0;
 }
 
-bool
-add_config_file_entry(WorkspaceInformation *ws_info, char **error_msg)
+static cJSON *
+get_config_file_array_from_file_buffer(char *config_file_buffer, char **error_msg)
 {
-    CLEAR_ERROR_MSG(error_msg);
-
-    char *config_file_buffer;
-    if (read_config_file_into_buffer(&config_file_buffer, error_msg) == false) {
-        SET_ERROR_MSG_IF_EMPTY(error_msg, "Unable to add config file entry as reading the configuration file failed");
-        return false;
-    }
-
-    cJSON *config_file_object_array;
+    cJSON *config_file_array_object = NULL;
     if (config_file_buffer == NULL || is_blank(config_file_buffer) || config_file_is_empty_array(config_file_buffer)) {
-        config_file_object_array = cJSON_CreateArray();
+        config_file_array_object = cJSON_CreateArray();
 
-        if (config_file_object_array == NULL) {
-            SET_ERROR_MSG(error_msg, "Unable to create a JSON array to populate the empty config file!");
-            goto error_out_1;
+        if (config_file_array_object == NULL) {
+            SET_ERROR_MSG(error_msg, "Unable to create a JSON array");
+            return NULL;
         }
     } else {
-        config_file_object_array = cJSON_Parse(config_file_buffer);
+        config_file_array_object = cJSON_Parse(config_file_buffer);
 
-        if (config_file_object_array == NULL) {
+        if (config_file_array_object == NULL) {
             char *base_error_msg = "Unable to parse config file, perhaps the JSON file is not properly formatted!";
 
             if (cJSON_GetErrorPtr() != NULL) {
@@ -200,18 +227,36 @@ add_config_file_entry(WorkspaceInformation *ws_info, char **error_msg)
                 SET_ERROR_MSG(error_msg, base_error_msg);
             }
 
-            goto error_out_1;
+            return NULL;
         }
+    }
+
+    return config_file_array_object;
+}
+
+bool
+add_config_file_entry(WorkspaceInformation *ws_info, char **error_msg)
+{
+    char *config_file_buffer = NULL;
+    if (read_config_file_into_buffer(&config_file_buffer, error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add config file entry", error_msg);
+        return false;
+    }
+
+    cJSON *config_file_object_array = get_config_file_array_from_file_buffer(config_file_buffer, error_msg);
+    if (config_file_object_array == NULL) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add config file entry", error_msg);
+        goto error_out_1;
     }
 
     int res = config_file_contains_workspace(config_file_object_array, ws_info, error_msg);
     if (res == -1) {
-        SET_ERROR_MSG_IF_EMPTY(error_msg, "Unable to add config file entry as checking if the workspace is already managed failed");
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add config file entry", error_msg);
         goto error_out_2;
     } else if (res == 1) {
         SET_ERROR_MSG(
                 error_msg,
-                "The workspace or one of its subdirectories is already managed by reSync."
+                "The workspace or one of its subdirectories is already managed by reSync. "
                 "If you want to add a new remote system for the workspace, please use the appropriate command!"
         );
         goto error_out_2;
@@ -220,17 +265,14 @@ add_config_file_entry(WorkspaceInformation *ws_info, char **error_msg)
 
     cJSON *json_ws_info = workspace_information_to_json(ws_info, error_msg);
     if (json_ws_info == NULL) {
-        SET_ERROR_MSG_IF_EMPTY(
-                error_msg,
-                "Unable to add config file entry as the workspace information received could not be mapped to JSON"
-        );
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add config file entry", error_msg);
         goto error_out_2;
     }
 
     cJSON_AddItemToArray(config_file_object_array, json_ws_info);
 
     if (write_config_file_from_buffer(cJSON_Print(config_file_object_array), error_msg) == false) {
-        SET_ERROR_MSG_IF_EMPTY(error_msg, "Unable to add config file entry as persisting the updated config file failed!");
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add config file entry", error_msg);
         goto error_out_2;
     }
 
@@ -245,6 +287,64 @@ error_out_1:
     return false;
 }
 
+bool
+add_remote_system_to_config_file_entry(WorkspaceInformation *ws_info, char **error_msg)
+{
+    char *config_file_buffer = NULL;
+    if (read_config_file_into_buffer(&config_file_buffer, error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        return false;
+    }
+
+    cJSON *config_file_object_array = get_config_file_array_from_file_buffer(config_file_buffer, error_msg);
+    if (config_file_object_array == NULL) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        goto error_out_1;
+    }
+
+    cJSON *exact_match = NULL;
+    int res = get_exact_match_local_workspace(config_file_object_array, ws_info->local_workspace_root_path, &exact_match, error_msg);
+    if (res == -1) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        goto error_out_2;
+    } else if (res == 0) {
+        SET_ERROR_MSG(error_msg, "Unable to add remote system to workspaces config file entry, as the specified workspace is not managed by reSync");
+        goto error_out_2;
+    }
+
+    cJSON *remote_systems_array = cJSON_GetObjectItemCaseSensitive(exact_match, KEY_REMOTE_SYSTEMS);
+    if (remote_systems_array == NULL) {
+        SET_ERROR_MSG(
+                error_msg,
+                "Unable to add remote system to workspaces config file entry, as config entry is malformed and does "
+                "not contain a member specifying the remote systems"
+        );
+        goto error_out_2;
+    }
+
+    cJSON *remote_system_json_to_add = remote_workspace_metadata_to_json(ws_info->remote_systems, error_msg);
+    if (remote_system_json_to_add == NULL) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        goto error_out_2;
+    }
+
+    cJSON_AddItemToArray(remote_systems_array, remote_system_json_to_add);
+
+    if (write_config_file_from_buffer(cJSON_Print(config_file_object_array), error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        goto error_out_2;
+    }
+
+    cJSON_Delete(config_file_object_array);
+    DO_FREE(config_file_buffer);
+    return true;
+
+error_out_2:
+    cJSON_Delete(config_file_object_array);
+error_out_1:
+    DO_FREE(config_file_buffer);
+    return false;
+}
 
 /*ConfigFileEntryInformation *
 parse_config_file(void)

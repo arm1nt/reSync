@@ -24,7 +24,7 @@ typedef struct ConfigFileEntryInformation {
 /*
  * Parses the reSync configuration file and returns a structured view of all contained information
  */
-ConfigFileEntryInformation *parse_config_file(void); //TODO: update to return NULL + error_msg in error case
+ConfigFileEntryInformation *parse_config_file(char **error_msg);
 
 bool add_config_file_entry(WorkspaceInformation *ws_info, char **error_msg);
 

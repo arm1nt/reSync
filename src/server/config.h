@@ -3,6 +3,9 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <fcntl.h>
+
 
 #include "../../lib/json/cJSON.h"
 #include "../../lib/ulist.h"
@@ -21,14 +24,14 @@ typedef struct ConfigFileEntryInformation {
 /*
  * Parses the reSync configuration file and returns a structured view of all contained information
  */
-ConfigFileEntryInformation *parse_config_file(void);
+ConfigFileEntryInformation *parse_config_file(void); //TODO: update to return NULL + error_msg in error case
 
-bool add_config_file_entry(void);
+bool add_config_file_entry(WorkspaceInformation *ws_info, char **error_msg);
 
-bool remove_config_file_entry(void);
+bool remove_config_file_entry(WorkspaceInformation *ws_info, char **error_msg);
 
-bool add_remote_system_to_config_file_entry(void);
+bool add_remote_system_to_config_file_entry(WorkspaceInformation *ws_info, char **error_msg);
 
-bool remove_remote_system_from_config_file_entry(void);
+bool remove_remote_system_from_config_file_entry(WorkspaceInformation *ws_info, char **error_msg);
 
 #endif //RESYNC_CONFIG_H

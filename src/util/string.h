@@ -42,4 +42,7 @@ char *format_string_from_list(const char *fmt, va_list args);
  */
 bool is_blank(const char *str);
 
+
+bool is_equal(const char *str1, const char *str2);
+
 #endif //RESYNC_STRING_H

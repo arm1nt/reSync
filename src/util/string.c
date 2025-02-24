@@ -58,3 +58,17 @@ is_blank(const char *str)
 
     return true;
 }
+
+bool
+is_equal(const char *str1, const char *str2)
+{
+    if (str1 == str2) {
+        return true;
+    }
+
+    if (str1 != NULL && str2 != NULL) {
+        return (strncmp(str1, str2, strlen(str1)) == 0) && (strlen(str1) == strlen(str2));
+    }
+
+    return false;
+}

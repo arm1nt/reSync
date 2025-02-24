@@ -51,7 +51,7 @@ config_file_is_empty_array(const char *buffer)
 static bool
 write_config_file_from_buffer(char *buffer, char **error_msg)
 {
-    int config_file_fd = open(CONFIG_FILE_PATH, O_WRONLY);
+    int config_file_fd = open(CONFIG_FILE_PATH, O_WRONLY | O_TRUNC);
     if (config_file_fd == -1) {
         SET_ERROR_MSG_RAW(
                 error_msg,
@@ -124,14 +124,14 @@ read_config_file_into_buffer(char **buf, char **error_msg) //pre-condition: buf 
 }
 
 static int
-get_exact_match_local_workspace(cJSON *config_entries_array, const char *path, cJSON **ws_info_json, char **error_msg)
+get_index_of_exact_match_local_workspace(cJSON *config_entries_array, const char *path, char **error_msg)
 {
     if (config_entries_array == NULL || path == NULL) {
         SET_ERROR_MSG(error_msg, "Config entries array and path of local workspace must be specified");
-        *ws_info_json = NULL;
-        return -1;
+        return -2;
     }
 
+    int index = 0;
     cJSON *config_array_entry;
     cJSON_ArrayForEach(config_array_entry, config_entries_array) {
         WorkspaceInformation *ws_info_entry = json_to_workspace_information(config_array_entry, error_msg);
@@ -150,18 +150,17 @@ get_exact_match_local_workspace(cJSON *config_entries_array, const char *path, c
                 );
             }
 
-            *ws_info_json = NULL;
-            return -1;
+            return -2;
         }
 
         if (is_equal(ws_info_entry->local_workspace_root_path, path)) {
-            *ws_info_json = config_array_entry;
-            return 1;
+            return index;
         }
+
+        index++;
     }
 
-    *ws_info_json = NULL;
-    return 0;
+    return -1;
 }
 
 static int
@@ -302,15 +301,16 @@ add_remote_system_to_config_file_entry(WorkspaceInformation *ws_info, char **err
         goto error_out_1;
     }
 
-    cJSON *exact_match = NULL;
-    int res = get_exact_match_local_workspace(config_file_object_array, ws_info->local_workspace_root_path, &exact_match, error_msg);
-    if (res == -1) {
+    int res = get_index_of_exact_match_local_workspace(config_file_object_array, ws_info->local_workspace_root_path, error_msg);
+    if (res == -2) {
         SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
         goto error_out_2;
-    } else if (res == 0) {
+    } else if (res == -1) {
         SET_ERROR_MSG(error_msg, "Unable to add remote system to workspaces config file entry, as the specified workspace is not managed by reSync");
         goto error_out_2;
     }
+
+    cJSON *exact_match = cJSON_GetArrayItem(config_file_object_array, res);
 
     cJSON *remote_systems_array = cJSON_GetObjectItemCaseSensitive(exact_match, KEY_REMOTE_SYSTEMS);
     if (remote_systems_array == NULL) {
@@ -332,6 +332,48 @@ add_remote_system_to_config_file_entry(WorkspaceInformation *ws_info, char **err
 
     if (write_config_file_from_buffer(cJSON_Print(config_file_object_array), error_msg) == false) {
         SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        goto error_out_2;
+    }
+
+    cJSON_Delete(config_file_object_array);
+    DO_FREE(config_file_buffer);
+    return true;
+
+error_out_2:
+    cJSON_Delete(config_file_object_array);
+error_out_1:
+    DO_FREE(config_file_buffer);
+    return false;
+}
+
+bool
+remove_config_file_entry(WorkspaceInformation *ws_info, char **error_msg)
+{
+    char *config_file_buffer = NULL;
+    if (read_config_file_into_buffer(&config_file_buffer, error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to remove workspace entry from config file", error_msg);
+        return false;
+    }
+
+    cJSON *config_file_object_array = get_config_file_array_from_file_buffer(config_file_buffer, error_msg);
+    if (config_file_object_array == NULL) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to remove workspace entry from config file", error_msg);
+        goto error_out_1;
+    }
+
+    int res = get_index_of_exact_match_local_workspace(config_file_object_array, ws_info->local_workspace_root_path, error_msg);
+    if (res == -2) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to remove workspace entry from config file", error_msg);
+        goto error_out_2;
+    } else if (res == -1) {
+        SET_ERROR_MSG(error_msg, "Unable to remove workspace entry from config file, as the specified workspace is not managed by reSync");
+        goto error_out_2;
+    }
+
+    cJSON_DeleteItemFromArray(config_file_object_array, res);
+
+    if (write_config_file_from_buffer(cJSON_Print(config_file_object_array), error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to remove workspace config entry from config file", error_msg);
         goto error_out_2;
     }
 

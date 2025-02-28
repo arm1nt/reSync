@@ -16,8 +16,18 @@
 #define RM_RS_MD_KEY_SSH_HOST_ALIAS "ssh-host-alias"
 
 /* Workspace information JSON object */
-// TODO:
-
+#define WS_INFO_KEY_LOCAL_WORKSPACE_ROOT_PATH "local-workspace-root-path"
+#define WS_INFO_KEY_REMOTE_SYSTEMS "remote-systems"
+#define WS_INFO_RSMD_REMOTE_WORKSPACE_ROOT_PATH "remote-workspace-root-path"
+#define WS_INFO_RSMD_CONNECTION_TYPE "connection-type"
+#define WS_INFO_RSMD_CONNECTION_INFORMATION "connection-information"
+#define WS_INFO_RSMD_SSH_CI_USERNAME "username"
+#define WS_INFO_RSMD_SSH_CI_HOSTNAME "hostname"
+#define WS_INFO_RSMD_SSH_CI_IDENTITY_FILE "identity-file"
+#define WS_INFO_RSMD_RSYNC_CI_HOSTNAME "hostname"
+#define WS_INFO_RSMD_RSYNC_CI_USERNAME "username"
+#define WS_INFO_RSMD_RSYNC_CI_PORT "port"
+#define WS_INFO_RSMD_SSH_HOST_ALIAS_ALIAS "ssh-host-alias"
 
 /*
  * Utility macros to e.g. map between enums and their string representation

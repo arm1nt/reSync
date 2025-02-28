@@ -33,7 +33,6 @@ RemoteWorkspaceMetadata *cjson_to_remoteWorkspaceMetadata(const cJSON *json_remo
 
 cJSON *remoteWorkspaceMetadata_to_cjson(RemoteWorkspaceMetadata *remote_ws_metadata, char **error_msg);
 
-
 /*
  * Enum <-> string representation mappers
  */

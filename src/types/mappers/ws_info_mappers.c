@@ -61,6 +61,55 @@ error_out:
     return NULL;
 }
 
+static SshConnectionInformation *
+cjson_to_sshConnectionInformation(const cJSON *json_object, char **error_msg)
+{
+    cJSON *entry;
+    SshConnectionInformation *ssh_connection_info = (SshConnectionInformation *) do_calloc(1, sizeof(SshConnectionInformation));
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_object, WS_INFO_RSMD_SSH_CI_HOSTNAME);
+    if (STRING_VAL_EXISTS(entry)) {
+        ssh_connection_info->hostname = resync_strdup(entry->valuestring);
+    } else {
+        SET_ERROR_MSG_RAW(error_msg, JSON_MEMBER_MISSING(WS_INFO_RSMD_SSH_CI_HOSTNAME, json_object));
+        goto error_out;
+    }
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_object, WS_INFO_RSMD_SSH_CI_USERNAME);
+    if (STRING_VAL_EXISTS(entry)) {
+        ssh_connection_info->username = resync_strdup(entry->valuestring);
+    }
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_object, WS_INFO_RSMD_SSH_CI_IDENTITY_FILE);
+    if (STRING_VAL_EXISTS(entry)) {
+
+        if (!validate_absolute_path(entry->valuestring, error_msg)) {
+            SET_ERROR_MSG_WITH_CAUSE_RAW(
+                    error_msg,
+                    format_string("Identity file path '%s' is not absolute", entry->valuestring),
+                    error_msg
+            );
+            goto error_out;
+        }
+
+        if (!validate_file_exists(entry->valuestring, error_msg)) {
+            SET_ERROR_MSG_RAW(
+                    error_msg,
+                    format_string("Identity file '%s' does not exist!", entry->valuestring)
+            );
+            goto error_out;
+        }
+
+        ssh_connection_info->path_to_identity_file = resync_strdup(entry->valuestring);
+    }
+
+    return ssh_connection_info;
+
+error_out:
+    destroy_sshConnectionInformation(&ssh_connection_info);
+    return NULL;
+}
+
 static cJSON *
 rsyncConnectionInformation_to_cJSON(RsyncConnectionInformation *connection_information, char **error_msg)
 {
@@ -109,6 +158,66 @@ error_out:
     return NULL;
 }
 
+static RsyncConnectionInformation *
+cjson_to_rsyncConnectionInformation(const cJSON *json_object, char **error_msg)
+{
+    cJSON *entry;
+    RsyncConnectionInformation *rsync_connection_info = (RsyncConnectionInformation *) do_calloc(1, sizeof(RsyncConnectionInformation));
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_object, WS_INFO_RSMD_RSYNC_CI_HOSTNAME);
+    if (STRING_VAL_EXISTS(entry)) {
+        rsync_connection_info->hostname = resync_strdup(entry->valuestring);
+    } else {
+        SET_ERROR_MSG_RAW(error_msg, JSON_MEMBER_MISSING(WS_INFO_RSMD_RSYNC_CI_HOSTNAME, json_object));
+        goto error_out;
+    }
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_object, WS_INFO_RSMD_RSYNC_CI_USERNAME);
+    if (STRING_VAL_EXISTS(entry)) {
+        rsync_connection_info->username = resync_strdup(entry->valuestring);
+    }
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_object, WS_INFO_RSMD_RSYNC_CI_PORT);
+    if (entry != NULL) {
+
+        if (entry->valuestring != NULL) {
+            SET_ERROR_MSG_RAW(
+                    error_msg,
+                    format_string(
+                            "Specified port value ('%s') is not a valid integer in the range [%d, %d]!: \n'%s'",
+                            entry->valuestring,
+                            MIN_PORT_NUMBER,
+                            MAX_PORT_NUMBER,
+                            cJSON_Print(json_object)
+                    )
+            );
+            goto error_out;
+        }
+
+        if (entry->valueint < MIN_PORT_NUMBER || entry->valueint > MAX_PORT_NUMBER) {
+            SET_ERROR_MSG_RAW(
+                    error_msg,
+                    format_string(
+                            "Specified port value ('%d') is not a valid integer in the range [%d, %d]!: \n'%s'",
+                            entry->valueint,
+                            MIN_PORT_NUMBER,
+                            MAX_PORT_NUMBER,
+                            cJSON_Print(json_object)
+                    )
+            );
+            goto error_out;
+        }
+
+        rsync_connection_info->port = entry->valueint;
+    }
+
+    return rsync_connection_info;
+
+error_out:
+    destroy_rsyncConnectionInformation(&rsync_connection_info);
+    return NULL;
+}
+
 static cJSON *
 sshHostAliasConnectionInformation_to_cJSON(char *ssh_host_alias, char **error_msg)
 {
@@ -125,6 +234,18 @@ sshHostAliasConnectionInformation_to_cJSON(char *ssh_host_alias, char **error_ms
     );
 
     return ssh_host_alias_connection_info_json;
+}
+
+static char *
+cjson_to_sshHostAliasConnectionInformation(const cJSON *json_object, char **error_msg)
+{
+    cJSON *entry = cJSON_GetObjectItemCaseSensitive(json_object, WS_INFO_RSMD_SSH_HOST_ALIAS_ALIAS);
+    if (!STRING_VAL_EXISTS(entry)) {
+        SET_ERROR_MSG_RAW(error_msg, JSON_MEMBER_MISSING(WS_INFO_RSMD_SSH_HOST_ALIAS_ALIAS, json_object));
+        return NULL;
+    }
+
+    return resync_strdup(entry->valuestring);
 }
 
 cJSON *
@@ -198,10 +319,145 @@ error_out:
     return NULL;
 }
 
+RemoteWorkspaceMetadata *
+cjson_to_remoteWorkspaceMetadata(const cJSON *json_remote_ws_metadata, char **error_msg)
+{
+    if (json_remote_ws_metadata == NULL) {
+        SET_ERROR_MSG(error_msg, "NO JSON representation of a RemoteWorkspaceMetadata struct provided!");
+        return NULL;
+    }
+
+    cJSON *entry;
+    RemoteWorkspaceMetadata *remote_ws_metadata = (RemoteWorkspaceMetadata *) do_calloc(1, sizeof(RemoteWorkspaceMetadata));
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_remote_ws_metadata, WS_INFO_RSMD_REMOTE_WORKSPACE_ROOT_PATH);
+    if (STRING_VAL_EXISTS(entry)) {
+
+        if (!validate_absolute_path(entry->valuestring, error_msg)) {
+            SET_ERROR_MSG_WITH_CAUSE_RAW(
+                    error_msg,
+                    format_string("Remote workspace path '%s' is not absolute", entry->valuestring),
+                    error_msg
+            );
+            goto error_out;
+        }
+
+        remote_ws_metadata->remote_workspace_root_path = resync_strdup(entry->valuestring);
+    } else {
+        SET_ERROR_MSG_RAW(error_msg, JSON_MEMBER_MISSING(WS_INFO_RSMD_REMOTE_WORKSPACE_ROOT_PATH, json_remote_ws_metadata));
+        goto error_out;
+    }
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_remote_ws_metadata, WS_INFO_RSMD_CONNECTION_TYPE);
+    if (!STRING_VAL_EXISTS(entry)) {
+        SET_ERROR_MSG_RAW(error_msg, JSON_MEMBER_MISSING(WS_INFO_RSMD_CONNECTION_TYPE, json_remote_ws_metadata));
+        goto error_out;
+    }
+
+    ConnectionType connection_type = string_to_connection_type(entry->valuestring);
+    if (connection_type == OTHER_CONNECTION_TYPE) {
+        SET_ERROR_MSG_RAW(
+                error_msg,
+                format_string("Unsupported connection type is specified in json object: \n'%s'", cJSON_Print(json_remote_ws_metadata))
+        );
+        goto error_out;
+    }
+
+    remote_ws_metadata->connection_type = connection_type;
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_remote_ws_metadata, WS_INFO_RSMD_CONNECTION_INFORMATION);
+    if (entry == NULL) {
+        SET_ERROR_MSG_RAW(error_msg, JSON_MEMBER_MISSING(WS_INFO_RSMD_CONNECTION_INFORMATION, json_remote_ws_metadata));
+        goto error_out;
+    }
+
+    void *connection_information;
+    switch (connection_type) {
+        case SSH:
+            connection_information = cjson_to_sshConnectionInformation(entry, error_msg);
+            remote_ws_metadata->connection_information.ssh_connection_information = (SshConnectionInformation *) connection_information;
+            break;
+        case SSH_HOST_ALIAS:
+            connection_information = cjson_to_sshHostAliasConnectionInformation(entry, error_msg);
+            remote_ws_metadata->connection_information.ssh_host_alias = (char *) connection_information;
+            break;
+        case RSYNC_DAEMON:
+            connection_information = cjson_to_rsyncConnectionInformation(entry, error_msg);
+            remote_ws_metadata->connection_information.rsync_connection_information = (RsyncConnectionInformation *) connection_information;
+            break;
+        case OTHER_CONNECTION_TYPE:
+        default:
+            SET_ERROR_MSG_RAW(
+                    error_msg,
+                    format_string("Unsupported connection type is specified in json object: \n'%s'", cJSON_Print(json_remote_ws_metadata))
+            );
+            goto error_out;
+    }
+
+    if (connection_information == NULL) {
+        goto error_out;
+    }
+
+    return remote_ws_metadata;
+
+error_out:
+    destroy_remoteWorkspaceMetadata(&remote_ws_metadata);
+    return NULL;
+}
+
 WorkspaceInformation *
 cjson_to_workspaceInformation(const cJSON *json_ws_info, char **error_msg)
 {
-    //TODO:
+    if (json_ws_info == NULL) {
+        SET_ERROR_MSG(error_msg, "No JSON representation of a WorkspaceInformation struct specified!");
+        return NULL;
+    }
+
+    cJSON *entry;
+    WorkspaceInformation *ws_info = (WorkspaceInformation *) do_calloc(1, sizeof(WorkspaceInformation));
+
+    entry = cJSON_GetObjectItemCaseSensitive(json_ws_info, WS_INFO_KEY_LOCAL_WORKSPACE_ROOT_PATH);
+    if (STRING_VAL_EXISTS(entry)) {
+        ws_info->local_workspace_root_path = resync_strdup(entry->valuestring);
+    } else {
+        SET_ERROR_MSG_RAW(error_msg, JSON_MEMBER_MISSING(WS_INFO_KEY_LOCAL_WORKSPACE_ROOT_PATH, json_ws_info));
+        goto error_out;
+    }
+
+    cJSON *remote_systems_array = cJSON_GetObjectItemCaseSensitive(json_ws_info, WS_INFO_KEY_REMOTE_SYSTEMS);
+    if (remote_systems_array == NULL) {
+        SET_ERROR_MSG_RAW(
+                error_msg,
+                format_string("Workspace ('%s') does not define any remote systems", ws_info->local_workspace_root_path)
+        );
+        goto error_out;
+    }
+
+    int remote_systems_counter = 0;
+    cJSON *remote_systems_array_entry;
+    cJSON_ArrayForEach(remote_systems_array_entry, remote_systems_array) {
+        remote_systems_counter++;
+
+        RemoteWorkspaceMetadata *remote_ws_metadata_entry = cjson_to_remoteWorkspaceMetadata(remote_systems_array_entry, error_msg);
+        if (remote_ws_metadata_entry == NULL) {
+            goto error_out;
+        }
+
+        LL_APPEND(ws_info->remote_systems, remote_ws_metadata_entry);
+    }
+
+    if (remote_systems_counter == 0) {
+        SET_ERROR_MSG_RAW(
+                error_msg,
+                format_string("Workspace ('%s') does not define any remote systems", ws_info->local_workspace_root_path)
+        );
+        goto error_out;
+    }
+
+    return ws_info;
+
+error_out:
+    destroy_workspaceInformation(&ws_info);
     return NULL;
 }
 

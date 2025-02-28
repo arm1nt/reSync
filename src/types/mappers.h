@@ -27,6 +27,14 @@ cJSON *workspaceInformation_to_cjson(WorkspaceInformation *ws_info, char **error
 char *workspaceInformation_to_stringified_json(WorkspaceInformation *ws_info, char **error_msg);
 
 /*
+ * RemoteWorkspaceMetadata <-> JSON mappers
+ */
+RemoteWorkspaceMetadata *cjson_to_remoteWorkspaceMetadata(const cJSON *json_remote_ws_metadata, char **error_msg);
+
+cJSON *remoteWorkspaceMetadata_to_cjson(RemoteWorkspaceMetadata *remote_ws_metadata, char **error_msg);
+
+
+/*
  * Enum <-> string representation mappers
  */
 ConnectionType string_to_connection_type(const char *stringified_connection_type);

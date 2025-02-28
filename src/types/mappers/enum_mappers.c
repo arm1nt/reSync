@@ -1,4 +1,5 @@
 #include "../types.h"
+#include "../mappers.h"
 #include "mapper_private.h"
 
 ConnectionType

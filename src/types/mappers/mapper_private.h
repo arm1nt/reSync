@@ -11,7 +11,7 @@
 #define RM_RS_KEY_LOCAL_WORKSPACE_ROOT_PATH "local-workspace-root-path"
 #define RM_RS_KEY_REMOTE_WORKSPACE_ROOT_PATH "remote-workspace-root-path"
 #define RM_RS_KEY_CONNECTION_TYPE "connection-type"
-#define RM_RS_KEY_REMOTE_SYSTEM_METADATA "remote-system-metadata"
+#define RM_RS_KEY_REMOTE_SYSTEM_ID_INFORMATION "remote-system-id-info"
 #define RM_RS_MD_KEY_HOSTNAME "hostname"
 #define RM_RS_MD_KEY_SSH_HOST_ALIAS "ssh-host-alias"
 

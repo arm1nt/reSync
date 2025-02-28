@@ -20,6 +20,8 @@ void *do_realloc(void *orig_ptr, const ssize_t mem_req);
  */
 void *do_malloc(const ssize_t mem_req);
 
+void *do_calloc(const int number, const ssize_t mem_req);
+
 /**
  *
  * @param ptr

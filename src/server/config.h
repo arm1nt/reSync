@@ -1,37 +1,28 @@
 #ifndef RESYNC_CONFIG_H
 #define RESYNC_CONFIG_H
 
-#include <errno.h>
-#include <stdbool.h>
-#include <unistd.h>
-#include <fcntl.h>
-
-
-#include "../../lib/json/cJSON.h"
+#include "../types/types.h"
+#include "../types/mappers.h"
 #include "../../lib/ulist.h"
-#include "../util/error.h"
-#include "../util/debug.h"
-#include "../types.h"
+#include "../../lib/json/cJSON.h"
 
-#define CONFIG_FILE_PATH "./resync.json"
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdbool.h>
 
-typedef struct ConfigFileEntryInformation {
-    WorkspaceInformation *workspace_information;
-    char *ws_information_json_string;
-    struct ConfigFileEntryInformation *next;
-} ConfigFileEntryInformation;
+
+#define DEFAULT_RESYNC_CONFIG_FILE_PATH "./resync.json"
+
+typedef struct ConfigFileEntryData {
+    const WorkspaceInformation *workspace_information;
+    const char *stringified_json_workspace_information;
+    struct ConfigFileEntryData *next;
+} ConfigFileEntryData;
 
 /*
- * Parses the reSync configuration file and returns a structured view of all contained information
+ * Functions to read, write and manipulate the reSync configuration file.
  */
-ConfigFileEntryInformation *parse_config_file(char **error_msg);
+bool parse_configuration_file(ConfigFileEntryData **config_file_entries, char **error_msg);
 
-bool add_config_file_entry(WorkspaceInformation *ws_info, char **error_msg);
-
-bool remove_config_file_entry(WorkspaceInformation *ws_info, char **error_msg);
-
-bool add_remote_system_to_config_file_entry(WorkspaceInformation *ws_info, char **error_msg);
-
-bool remove_remote_system_from_config_file_entry(WorkspaceInformation *ws_info, char **error_msg);
 
 #endif //RESYNC_CONFIG_H

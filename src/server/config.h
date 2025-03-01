@@ -26,5 +26,6 @@ bool parse_configuration_file(ConfigFileEntryData **config_file_entries, char **
 
 bool add_workspace_to_configuration_file(const WorkspaceInformation *ws_info, ConfigFileEntryData **config_entry_data, char **error_msg);
 
+bool remove_workspace_from_configuration_file(const char *workspace_root_path, char **error_msg);
 
 #endif //RESYNC_CONFIG_H

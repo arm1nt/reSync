@@ -181,6 +181,38 @@ config_file_contains_workspace(cJSON *config_entries_array, const WorkspaceInfor
     return 0;
 }
 
+static int
+get_index_of_exact_match_workspace(cJSON *config_entries_array, const char *path, char **error_msg)
+{
+    if (config_entries_array == NULL || path == NULL) {
+        SET_ERROR_MSG(
+                error_msg,
+                "The config entry array and the workspace path must be specified when removing a workspace from "
+                "being managed by reSync!"
+        );
+        return -2;
+    }
+
+    int loop_index = 0;
+    cJSON *config_array_entry;
+    cJSON_ArrayForEach(config_array_entry, config_entries_array) {
+
+        WorkspaceInformation *ws_info_entry = cjson_to_workspaceInformation(config_array_entry, error_msg);
+        if (ws_info_entry == NULL) {
+            SET_ERROR_MSG_WITH_CAUSE(error_msg, "An error occurred while searching the workspaces contained in the configuration file", error_msg);
+            return -2;
+        }
+
+        if (is_equal(ws_info_entry->local_workspace_root_path, path)) {
+            return loop_index;
+        }
+
+        loop_index++;
+    }
+
+    return -1;
+}
+
 bool
 add_workspace_to_configuration_file(const WorkspaceInformation *ws_info, ConfigFileEntryData **config_entry_data, char **error_msg)
 {
@@ -239,6 +271,7 @@ add_workspace_to_configuration_file(const WorkspaceInformation *ws_info, ConfigF
     config_entry->workspace_information = ws_info;
     config_entry->stringified_json_workspace_information = cJSON_Print(json_ws_info);
 
+    DO_FREE(config_file_buffer);
     cJSON_Delete(json_config_file_entry_array);
     *config_entry_data = config_entry;
     return true;
@@ -251,6 +284,55 @@ error_out:
 
     cJSON_Delete(json_config_file_entry_array);
 
+    DO_FREE(config_file_buffer);
+    return false;
+}
+
+bool
+remove_workspace_from_configuration_file(const char *workspace_root_path, char **error_msg)
+{
+    if (workspace_root_path == NULL) {
+        SET_ERROR_MSG(error_msg, "The path of the workspace that should no longer be managed by reSync is missing!");
+        return false;
+    }
+
+    char *config_file_buffer = NULL;
+    if (read_configuration_file_into_buffer(&config_file_buffer, error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to remove the workspace from the configuration file", error_msg);
+        return false;
+    }
+
+    cJSON *json_config_file_entry_array = get_json_array_from_config_file_buffer(config_file_buffer, error_msg);
+    if (json_config_file_entry_array == NULL) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to remove the workspace from the configuration file", error_msg);
+        goto error_out;
+    }
+
+    int index = get_index_of_exact_match_workspace(json_config_file_entry_array, workspace_root_path, error_msg);
+    if (index == -2) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to remove the workspace from the configuration file", error_msg);
+        goto error_out;
+    } else if (index == -1) {
+        SET_ERROR_MSG_RAW(
+                error_msg,
+                format_string("The specified workspace ('%s') is not being managed by reSync", workspace_root_path)
+        );
+        goto error_out;
+    }
+
+    cJSON_DeleteItemFromArray(json_config_file_entry_array, index);
+
+    if (write_to_configuration_file_from_buffer(cJSON_Print(json_config_file_entry_array), error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to remove the workspace from the configuration file", error_msg);
+        goto error_out;
+    }
+
+    cJSON_Delete(json_config_file_entry_array);
+    DO_FREE(config_file_buffer);
+    return true;
+
+error_out:
+    cJSON_Delete(json_config_file_entry_array);
     DO_FREE(config_file_buffer);
     return false;
 }
@@ -289,6 +371,7 @@ parse_configuration_file(ConfigFileEntryData **config_file_entries, char **error
     }
 
     cJSON_Delete(json_config_file_entry_array);
+    DO_FREE(config_file_buffer);
     *config_file_entries = config_file_entry_list_head;
     return true;
 

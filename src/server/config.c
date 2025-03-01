@@ -5,6 +5,36 @@
 #define CONFIG_READ_CHUNK_SIZE ((ssize_t)(2048 * sizeof(char)))
 
 static bool
+write_to_configuration_file_from_buffer(const char *config_file_buffer, char **error_msg)
+{
+    if (config_file_buffer == NULL) {
+        SET_ERROR_MSG(error_msg, "Unable to write to reSync configuration file as no data to write was specified!");
+        return false;
+    }
+
+    int config_file_fd = open(DEFAULT_RESYNC_CONFIG_FILE_PATH, O_WRONLY | O_TRUNC);
+    if (config_file_fd == -1) {
+        SET_ERROR_MSG_RAW(
+                error_msg,
+                format_string("Unable to open reSync configuration file for writing: %s", strerror(errno))
+        );
+        return false;
+    }
+
+    if (write(config_file_fd, config_file_buffer, strlen(config_file_buffer)) == -1) {
+        close(config_file_fd);
+        SET_ERROR_MSG_RAW(
+                error_msg,
+                format_string("Unable to write to reSync configuration file: %s", strerror(errno))
+        );
+        return false;
+    }
+
+    close(config_file_fd);
+    return true;
+}
+
+static bool
 is_config_file_empty(const char *config_file_buffer)
 {
     if (config_file_buffer == NULL) {
@@ -120,6 +150,111 @@ get_json_array_from_config_file_buffer(const char *config_file_buffer, char **er
     return json_config_file_array;
 }
 
+static int
+config_file_contains_workspace(cJSON *config_entries_array, const WorkspaceInformation *ws_info, char **error_msg)
+{
+    if (config_entries_array == NULL || ws_info == NULL) {
+        SET_ERROR_MSG(
+                error_msg,
+                "Config entries array and WorkspaceInformation struct must be specified when checking if a workspace is "
+                "already managed by reSync"
+        );
+        return -1;
+    }
+
+    cJSON *config_array_entry;
+    cJSON_ArrayForEach(config_array_entry, config_entries_array) {
+        WorkspaceInformation *ws_info_entry = cjson_to_workspaceInformation(config_array_entry, error_msg);
+        if (ws_info_entry == NULL) {
+            SET_ERROR_MSG_WITH_CAUSE(error_msg, "An error occurred while checking if the workspace is already managed by reSync", error_msg);
+            return -1;
+        }
+
+        if (strncmp(ws_info->local_workspace_root_path, ws_info_entry->local_workspace_root_path, strlen(ws_info->local_workspace_root_path)) == 0
+            || strncmp(ws_info_entry->local_workspace_root_path, ws_info->local_workspace_root_path, strlen(ws_info_entry->local_workspace_root_path)) == 0) {
+            // If a subdirectory or a parent directory is already managed by reSync, the requested workspace cannot also
+            //  be managed by it.
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+bool
+add_workspace_to_configuration_file(const WorkspaceInformation *ws_info, ConfigFileEntryData **config_entry_data, char **error_msg)
+{
+    if (config_entry_data == NULL) {
+        SET_ERROR_MSG(error_msg, "config_entry_data is NULL");
+        return false;
+    }
+
+    *config_entry_data = NULL;
+
+    if (ws_info == NULL) {
+        SET_ERROR_MSG(error_msg, "Unable to add workspace to configuration file as specified WorkspaceInformation struct is NULL");
+        return false;
+    }
+
+    char *config_file_buffer = NULL;
+    if (read_configuration_file_into_buffer(&config_file_buffer, error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add workspace to configuration file", error_msg);
+        return false;
+    }
+
+    cJSON *json_config_file_entry_array = get_json_array_from_config_file_buffer(config_file_buffer, error_msg);
+    if (json_config_file_entry_array == NULL) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add workspace to configuration file", error_msg);
+        goto error_out;
+    }
+
+    int res = config_file_contains_workspace(json_config_file_entry_array, ws_info, error_msg);
+    if (res == -1) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add workspace to configuration file", error_msg);
+        goto error_out;
+    } else if (res == 1) {
+        SET_ERROR_MSG(
+                error_msg,
+                "The workspace, a parent directory of this workspace or a child directory is already managed by reSync. "
+                "If you want to add a new remote system for the workspace, please use the appropriate command."
+        );
+        goto error_out;
+    }
+
+
+    cJSON *json_ws_info = workspaceInformation_to_cjson(ws_info, error_msg);
+    if (json_ws_info == NULL) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add workspace to configuration file", error_msg);
+        goto error_out;
+    }
+
+    cJSON_AddItemToArray(json_config_file_entry_array, json_ws_info);
+
+    if (write_to_configuration_file_from_buffer(cJSON_Print(json_config_file_entry_array), error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add workspace to configuration file", error_msg);
+        goto error_out_ext;
+    }
+
+    ConfigFileEntryData *config_entry = (ConfigFileEntryData *) do_calloc(1, sizeof(ConfigFileEntryData));
+    config_entry->workspace_information = ws_info;
+    config_entry->stringified_json_workspace_information = cJSON_Print(json_ws_info);
+
+    cJSON_Delete(json_config_file_entry_array);
+    *config_entry_data = config_entry;
+    return true;
+
+error_out_ext:
+
+    cJSON_Delete(json_ws_info);
+
+error_out:
+
+    cJSON_Delete(json_config_file_entry_array);
+
+    DO_FREE(config_file_buffer);
+    return false;
+}
+
 bool
 parse_configuration_file(ConfigFileEntryData **config_file_entries, char **error_msg)
 {
@@ -153,14 +288,13 @@ parse_configuration_file(ConfigFileEntryData **config_file_entries, char **error
         LL_APPEND(config_file_entry_list_head, entry);
     }
 
+    cJSON_Delete(json_config_file_entry_array);
     *config_file_entries = config_file_entry_list_head;
     return true;
 
 error_out:
 
-    if (json_config_file_entry_array != NULL) {
-        cJSON_Delete(json_config_file_entry_array);
-    }
+    cJSON_Delete(json_config_file_entry_array);
 
     ConfigFileEntryData *entry, *temp;
     LL_FOREACH_SAFE(config_file_entry_list_head, entry, temp) {

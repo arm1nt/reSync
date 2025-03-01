@@ -24,5 +24,7 @@ typedef struct ConfigFileEntryData {
  */
 bool parse_configuration_file(ConfigFileEntryData **config_file_entries, char **error_msg);
 
+bool add_workspace_to_configuration_file(const WorkspaceInformation *ws_info, ConfigFileEntryData **config_entry_data, char **error_msg);
+
 
 #endif //RESYNC_CONFIG_H

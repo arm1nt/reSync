@@ -30,4 +30,6 @@ bool remove_workspace_from_configuration_file(const char *workspace_root_path, c
 
 bool add_remote_system_to_workspace_config_entry(const WorkspaceInformation *ws_info, ConfigFileEntryData **config_entry_data, char **error_msg);
 
+bool remove_remote_system_from_workspace_config_entry(const RemoveRemoteSystemMetadata *rm_rsys, ConfigFileEntryData **config_entry_data, char **error_msg);
+
 #endif //RESYNC_CONFIG_H

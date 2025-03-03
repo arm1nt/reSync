@@ -338,6 +338,88 @@ error_out:
 }
 
 bool
+add_remote_system_to_workspace_config_entry(const WorkspaceInformation *ws_info, ConfigFileEntryData **config_entry_data, char **error_msg)
+{
+    if (config_entry_data == NULL) {
+        SET_ERROR_MSG(error_msg, "config_entry_data is NULL");
+        return false;
+    }
+
+    *config_entry_data = NULL;
+
+    if (ws_info == NULL) {
+        SET_ERROR_MSG(
+                error_msg,
+                "Unable to add a remote system definition to the workspace as the WorkspaceInformation struct, holding "
+                "the data required to perform this operation, is NULL!"
+        );
+        return false;
+    }
+
+    char *config_file_buffer = NULL;
+    if (read_configuration_file_into_buffer(&config_file_buffer, error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        return false;
+    }
+
+    cJSON *json_config_file_entry_array = get_json_array_from_config_file_buffer(config_file_buffer, error_msg);
+    if (json_config_file_entry_array == NULL) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        goto error_out;
+    }
+
+    int entry_index = get_index_of_exact_match_workspace(json_config_file_entry_array, ws_info->local_workspace_root_path, error_msg);
+    if (entry_index == -2) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces configuration file entry", error_msg);
+        goto error_out;
+    } else if (entry_index == -1) {
+        SET_ERROR_MSG_RAW(
+                error_msg,
+                format_string("The specified workspace ('%s') is not being managed by reSync", ws_info->local_workspace_root_path)
+        );
+        goto error_out;
+    }
+
+    cJSON *json_ws_info_entry = cJSON_GetArrayItem(json_config_file_entry_array, entry_index);
+
+    cJSON *remote_systems_array = cJSON_GetObjectItemCaseSensitive(json_ws_info_entry, "remote-systems");
+    if (remote_systems_array == NULL) {
+        SET_ERROR_MSG(
+                error_msg,
+                "Unable to add remote system to workspaces config file entry, as the config file entry does not contain a 'remote-systems' key"
+        );
+        goto error_out;
+    }
+
+    cJSON *remote_system_to_add = remoteWorkspaceMetadata_to_cjson(ws_info->remote_systems, error_msg);
+    if (remote_system_to_add == NULL) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        goto error_out;
+    }
+
+    cJSON_AddItemToArray(remote_systems_array, remote_system_to_add);
+
+    if (write_to_configuration_file_from_buffer(cJSON_Print(json_config_file_entry_array), error_msg) == false) {
+        SET_ERROR_MSG_WITH_CAUSE(error_msg, "Unable to add remote system to workspaces config file entry", error_msg);
+        goto error_out;
+    }
+
+    ConfigFileEntryData *updated_config_entry = (ConfigFileEntryData *) do_calloc(1, sizeof(ConfigFileEntryData));
+    updated_config_entry->workspace_information = ws_info;
+    updated_config_entry->stringified_json_workspace_information = cJSON_Print(json_ws_info_entry);
+    *config_entry_data = updated_config_entry;
+
+    DO_FREE(config_file_buffer);
+    cJSON_Delete(json_config_file_entry_array);
+    return true;
+
+error_out:
+    cJSON_Delete(json_config_file_entry_array);
+    DO_FREE(config_file_buffer);
+    return false;
+}
+
+bool
 parse_configuration_file(ConfigFileEntryData **config_file_entries, char **error_msg)
 {
     *config_file_entries = NULL;

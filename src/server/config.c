@@ -150,6 +150,11 @@ get_json_array_from_config_file_buffer(const char *config_file_buffer, char **er
     return json_config_file_array;
 }
 
+/*
+ * 1: Config file contains the workspace
+ * 0: The config file does not contain an entry for the workspace
+ * -1: An error occurred while searching the config file
+ */
 static int
 config_file_contains_workspace(cJSON *config_entries_array, const WorkspaceInformation *ws_info, char **error_msg)
 {
@@ -181,6 +186,11 @@ config_file_contains_workspace(cJSON *config_entries_array, const WorkspaceInfor
     return 0;
 }
 
+/*
+ * >= 0: The index of the matching workspace in the array
+ * -1: no exact match was found
+ * -2: An error occurred while searching the array for an exact match
+ */
 static int
 get_index_of_exact_match_workspace(cJSON *config_entries_array, const char *path, char **error_msg)
 {
@@ -500,6 +510,13 @@ add_remote_system_to_workspace_config_entry(const WorkspaceInformation *ws_info,
                 "Unable to add remote system to workspaces config file entry, as the config file entry does not contain a 'remote-systems' key"
         );
         goto error_out;
+    } else if (!cJSON_IsArray(remote_systems_array)) {
+        SET_ERROR_MSG(
+                error_msg,
+                "The current value of the workspaces 'remote-systems' member is not an array, but it must be an "
+                "(possibly empty) array of remote system objects!"
+        );
+        goto error_out;
     }
 
     cJSON *remote_system_to_add = remoteWorkspaceMetadata_to_cjson(ws_info->remote_systems, error_msg);
@@ -586,7 +603,7 @@ remove_remote_system_from_workspace_config_entry(const RemoveRemoteSystemMetadat
         SET_ERROR_MSG(
                 error_msg,
                 "The current value of the workspaces 'remote-systems' member is not an array, but it must be an "
-                "array of remote system objects!"
+                "(possibly empty) array of remote system objects!"
         );
         goto error_out;
     }
